@@ -62,12 +62,12 @@ class MarketOverview:
     """市场概览数据"""
     date: str                           # 日期
     indices: List[MarketIndex] = field(default_factory=list)  # 主要指数
-    up_count: int = 0                   # 上涨家数
-    down_count: int = 0                 # 下跌家数
-    flat_count: int = 0                 # 平盘家数
-    limit_up_count: int = 0             # 涨停家数
-    limit_down_count: int = 0           # 跌停家数
-    total_amount: float = 0.0           # 两市成交额（亿元）
+    up_count: Optional[int] = None      # 上涨家数；None 表示数据缺失
+    down_count: Optional[int] = None    # 下跌家数；None 表示数据缺失
+    flat_count: Optional[int] = None    # 平盘家数；None 表示数据缺失
+    limit_up_count: Optional[int] = None    # 涨停家数；None 表示数据缺失
+    limit_down_count: Optional[int] = None  # 跌停家数；None 表示数据缺失
+    total_amount: Optional[float] = None    # 两市成交额（亿元）；None 表示数据缺失
     # north_flow: float = 0.0           # 北向资金净流入（亿元）- 已废弃，接口不可用
     
     # 板块涨幅榜
@@ -172,16 +172,18 @@ class MarketAnalyzer:
             stats = self.data_manager.get_market_stats()
 
             if stats:
-                overview.up_count = stats.get('up_count', 0)
-                overview.down_count = stats.get('down_count', 0)
-                overview.flat_count = stats.get('flat_count', 0)
-                overview.limit_up_count = stats.get('limit_up_count', 0)
-                overview.limit_down_count = stats.get('limit_down_count', 0)
-                overview.total_amount = stats.get('total_amount', 0.0)
+                overview.up_count = stats.get('up_count')
+                overview.down_count = stats.get('down_count')
+                overview.flat_count = stats.get('flat_count')
+                overview.limit_up_count = stats.get('limit_up_count')
+                overview.limit_down_count = stats.get('limit_down_count')
+                overview.total_amount = stats.get('total_amount')
 
-                logger.info(f"[大盘] 涨:{overview.up_count} 跌:{overview.down_count} 平:{overview.flat_count} "
-                          f"涨停:{overview.limit_up_count} 跌停:{overview.limit_down_count} "
-                          f"成交额:{overview.total_amount:.0f}亿")
+                amount_text = f"{overview.total_amount:.0f}亿" if overview.total_amount is not None else "暂无数据"
+                logger.info(
+                    f"[大盘] 涨:{overview.up_count} 跌:{overview.down_count} 平:{overview.flat_count} "
+                    f"涨停:{overview.limit_up_count} 跌停:{overview.limit_down_count} 成交额:{amount_text}"
+                )
 
         except Exception as e:
             logger.error(f"[大盘] 获取涨跌统计失败: {e}")
@@ -348,6 +350,9 @@ class MarketAnalyzer:
 - 禁止输出 JSON 格式
 - 禁止输出代码块
 - emoji 仅在标题处少量使用（每个标题最多1个）
+- 严禁把“暂无数据”或缺失字段当成 0；不得编造成交额、涨跌家数、资金流向或板块信息
+- 成交额、涨跌统计或板块数据缺失时，明确说明数据未获取，不得据此推断资金流向或市场风格
+- 只分析输入中实际存在且有效的数据；新闻只能作为新闻信息，不能替代缺失的行情统计
 
 ---
 
@@ -360,9 +365,9 @@ class MarketAnalyzer:
 {indices_text if indices_text else "暂无指数数据（接口异常）"}
 
 ## 市场概况
-- 上涨: {overview.up_count} 家 | 下跌: {overview.down_count} 家 | 平盘: {overview.flat_count} 家
-- 涨停: {overview.limit_up_count} 家 | 跌停: {overview.limit_down_count} 家
-- 两市成交额: {overview.total_amount:.0f} 亿元
+- 上涨: {overview.up_count if overview.up_count is not None else "暂无数据"} 家 | 下跌: {overview.down_count if overview.down_count is not None else "暂无数据"} 家 | 平盘: {overview.flat_count if overview.flat_count is not None else "暂无数据"} 家
+- 涨停: {overview.limit_up_count if overview.limit_up_count is not None else "暂无数据"} 家 | 跌停: {overview.limit_down_count if overview.limit_down_count is not None else "暂无数据"} 家
+- 两市成交额: {f"{overview.total_amount:.0f} 亿元" if overview.total_amount is not None else "暂无数据"}
 
 ## 板块表现
 领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
@@ -441,11 +446,11 @@ class MarketAnalyzer:
 ### 三、涨跌统计
 | 指标 | 数值 |
 |------|------|
-| 上涨家数 | {overview.up_count} |
-| 下跌家数 | {overview.down_count} |
-| 涨停 | {overview.limit_up_count} |
-| 跌停 | {overview.limit_down_count} |
-| 两市成交额 | {overview.total_amount:.0f}亿 |
+| 上涨家数 | {overview.up_count if overview.up_count is not None else "暂无数据"} |
+| 下跌家数 | {overview.down_count if overview.down_count is not None else "暂无数据"} |
+| 涨停 | {overview.limit_up_count if overview.limit_up_count is not None else "暂无数据"} |
+| 跌停 | {overview.limit_down_count if overview.limit_down_count is not None else "暂无数据"} |
+| 两市成交额 | {f"{overview.total_amount:.0f}亿" if overview.total_amount is not None else "暂无数据"} |
 
 ### 四、板块表现
 - **领涨**: {top_text}
