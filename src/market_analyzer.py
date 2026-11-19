@@ -417,7 +417,11 @@ class MarketAnalyzer:
         """使用模板生成复盘报告（无大模型时的备选方案）"""
         
         # 判断市场走势
-        sh_index = next((idx for idx in overview.indices if idx.code == '000001'), None)
+        sh_index = next(
+            (idx for idx in overview.indices
+             if idx.code in ('000001', 'sh000001', '000001.SH') or idx.name == '上证指数'),
+            None
+        )
         if sh_index:
             if sh_index.change_pct > 1:
                 market_mood = "强势上涨"
