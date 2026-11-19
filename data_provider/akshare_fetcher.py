@@ -237,7 +237,7 @@ class AkshareFetcher(BaseFetcher):
         - 美股：使用 ak.stock_us_daily()
         - 港股：使用 ak.stock_hk_hist()
         - ETF 基金：使用 ak.fund_etf_hist_em()
-        - 普通 A 股：使用 ak.stock_zh_a_hist()
+        - 普通 A 股：使用 ak.stock_zh_a_hist_em()
         
         流程：
         1. 判断代码类型（美股/港股/ETF/A股）
@@ -293,7 +293,7 @@ class AkshareFetcher(BaseFetcher):
     def _fetch_stock_data_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
         获取普通 A 股历史数据 (东方财富)
-        数据来源：ak.stock_zh_a_hist()
+        数据来源：ak.stock_zh_a_hist_em()
         """
         import akshare as ak
 
@@ -303,13 +303,13 @@ class AkshareFetcher(BaseFetcher):
         # 防封禁策略 2: 强制休眠
         self._enforce_rate_limit()
 
-        logger.info(f"[API调用] ak.stock_zh_a_hist(symbol={stock_code}, ...)")
+        logger.info(f"[API调用] ak.stock_zh_a_hist_em(symbol={stock_code}, ...)")
 
         try:
             import time as _time
             api_start = _time.time()
 
-            df = ak.stock_zh_a_hist(
+            df = ak.stock_zh_a_hist_em(
                 symbol=stock_code,
                 period="daily",
                 start_date=start_date.replace('-', ''),
@@ -335,7 +335,7 @@ class AkshareFetcher(BaseFetcher):
     def _fetch_stock_data_sina(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
         获取普通 A 股历史数据 (新浪财经)
-        数据来源：ak.stock_zh_a_daily()
+        数据来源：ak.stock_zh_a_hist_sina()
         """
         import akshare as ak
 
@@ -348,7 +348,7 @@ class AkshareFetcher(BaseFetcher):
         self._enforce_rate_limit()
 
         try:
-            df = ak.stock_zh_a_daily(
+            df = ak.stock_zh_a_hist_sina(
                 symbol=symbol,
                 start_date=start_date.replace('-', ''),
                 end_date=end_date.replace('-', ''),
@@ -1322,7 +1322,7 @@ class AkshareFetcher(BaseFetcher):
             self._enforce_rate_limit()
 
             # 使用 akshare 获取指数行情（新浪财经接口）
-            df = ak.stock_zh_index_spot_sina()
+            df = ak.index_zh_spot_sina()
 
             results = []
             if df is not None and not df.empty:
