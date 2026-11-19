@@ -846,12 +846,15 @@ class DataFetcherManager:
                     continue
 
                 try:
-                    breadth = sum(int(data[key]) for key in required[:3])
+                    counts = [float(data[key]) for key in required[:3]]
                     amount = float(data["total_amount"])
-                except (TypeError, ValueError):
+                    if not all(np.isfinite(value) and value >= 0 for value in counts):
+                        raise ValueError("涨跌家数包含无效数值")
+                    breadth = sum(int(value) for value in counts)
+                except (TypeError, ValueError, OverflowError):
                     breadth, amount = 0, 0
 
-                if breadth <= 0 or not pd.notna(amount) or amount <= 0:
+                if breadth <= 0 or not np.isfinite(amount) or amount <= 0:
                     logger.warning(f"[{fetcher.name}] 市场统计无效（家数={breadth}, 成交额={amount}），尝试备用数据源")
                     continue
 
