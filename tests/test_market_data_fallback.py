@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 
 from data_provider.base import DataFetcherManager
-from src.market_analyzer import MarketAnalyzer, MarketOverview, MarketIndex
+from src.market_analyzer import MarketAnalyzer, MarketOverview
 
 
 class MarketDataFallbackTests(unittest.TestCase):
@@ -65,7 +65,7 @@ class MarketDataFallbackTests(unittest.TestCase):
 
         self.assertIn("行情数据缺失，暂无法判断", report)
         self.assertIn("指数行情未获取", report)
-        self.assertIn("领涨: 暂无数据", report)
+        self.assertIn("**领涨**: 暂无数据", report)
         self.assertNotIn("震荡整理", report)
 
     def test_ai_prompt_forbids_fund_flow_inference_without_data(self):
