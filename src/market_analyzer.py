@@ -144,13 +144,13 @@ class MarketAnalyzer:
                         current=item['current'],
                         change=item['change'],
                         change_pct=item['change_pct'],
-                        open=item['open'],
-                        high=item['high'],
-                        low=item['low'],
-                        prev_close=item['prev_close'],
-                        volume=item['volume'],
-                        amount=item['amount'],
-                        amplitude=item['amplitude']
+                        open=item.get('open', 0.0) or 0.0,
+                        high=item.get('high', 0.0) or 0.0,
+                        low=item.get('low', 0.0) or 0.0,
+                        prev_close=item.get('prev_close', 0.0) or 0.0,
+                        volume=item.get('volume', 0.0) or 0.0,
+                        amount=item.get('amount', 0.0) or 0.0,
+                        amplitude=item.get('amplitude', 0.0) or 0.0
                     )
                     indices.append(index)
 
@@ -357,6 +357,9 @@ class MarketAnalyzer:
 - emoji 仅在标题处少量使用（每个标题最多1个）
 - 严禁把“暂无数据”或缺失字段当成 0；不得编造成交额、涨跌家数、资金流向或板块信息
 - 成交额、涨跌统计或板块数据缺失时，明确说明数据未获取，不得据此推断资金流向或市场风格
+- 输入没有资金流向数据时，不得描述主力资金、北向资金或行业资金净流入/流出；成交额只能用于描述成交规模，不能代表资金流向
+- 如果主要指数行情缺失，不得使用“上涨、下跌、震荡整理、强势”等词判断当日市场方向；必须明确写明指数行情未获取
+- 如果指数行情、涨跌统计和成交额均缺失，后市展望只能列出待观察事项，不得给出方向性预测
 - 只分析输入中实际存在且有效的数据；新闻只能作为新闻信息，不能替代缺失的行情统计
 
 ---
@@ -381,7 +384,7 @@ class MarketAnalyzer:
 ## 市场新闻
 {news_text if news_text else "暂无相关新闻"}
 
-{"注意：由于行情数据获取失败，请主要根据【市场新闻】进行定性分析和总结，不要编造具体的指数点位。" if not indices_text else ""}
+{"注意：主要指数行情未获取。必须明确说明指数数据缺失；不得根据新闻推断当日市场涨跌方向、市场情绪或资金动向。" if not indices_text else ""}
 
 ---
 
@@ -390,19 +393,19 @@ class MarketAnalyzer:
 ## 📊 {overview.date} 大盘复盘
 
 ### 一、市场总结
-（2-3句话概括今日市场整体表现，包括指数涨跌、成交量变化）
+（仅概括已获取的指数和市场统计；缺失的数据明确标注未获取，不推测市场方向）
 
 ### 二、指数点评
-（分析上证、深证、创业板等各指数走势特点）
+（仅点评实际提供的指数数据；没有指数数据时明确说明未获取）
 
-### 三、资金动向
-（解读成交额流向的含义）
+### 三、成交情况
+（仅在成交额有效时描述成交规模；没有资金流向数据时不得推断资金流入或流出）
 
 ### 四、热点解读
-（分析领涨领跌板块背后的逻辑和驱动因素）
+（仅在板块排行有效时分析板块；没有板块数据时明确说明未获取）
 
-### 五、后市展望
-（结合当前走势和新闻，给出明日市场预判）
+### 五、后市观察
+（结合有效行情和新闻列出观察事项；关键行情缺失时不作方向性预测）
 
 ### 六、风险提示
 （需要关注的风险点）
@@ -432,7 +435,7 @@ class MarketAnalyzer:
             else:
                 market_mood = "明显下跌"
         else:
-            market_mood = "震荡整理"
+            market_mood = "行情数据缺失，暂无法判断"
         
         # 指数行情（简洁格式）
         indices_text = ""
@@ -452,10 +455,10 @@ class MarketAnalyzer:
         report = f"""## 📊 {overview.date} 大盘复盘
 
 ### 一、市场总结
-今日A股市场整体呈现**{market_mood}**态势。
+今日A股市场：**{market_mood}**。
 
 ### 二、主要指数
-{indices_text}
+{indices_text if indices_text else "指数行情未获取，暂无法进行指数点评。"}
 
 ### 三、涨跌统计
 | 指标 | 数值 |
