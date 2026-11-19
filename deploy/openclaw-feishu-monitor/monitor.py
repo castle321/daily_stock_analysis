@@ -168,7 +168,7 @@ def deliver_run(run, conn):
     existing = conn.execute(
         "SELECT status FROM deliveries WHERE run_id=?", (run_id,)
     ).fetchone()
-    if existing and existing[0] == "sent":
+    if existing and existing[0] in ("sent", "no_report"):
         return
 
     artifacts = list_artifacts(run_id)
