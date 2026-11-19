@@ -320,10 +320,10 @@ class AkshareFetcher(BaseFetcher):
             api_elapsed = _time.time() - api_start
 
             if df is not None and not df.empty:
-                logger.info(f"[API返回] ak.stock_zh_a_hist 成功: {len(df)} 行, 耗时 {api_elapsed:.2f}s")
+                logger.info(f"[API返回] ak.stock_zh_a_hist_em 成功: {len(df)} 行, 耗时 {api_elapsed:.2f}s")
                 return df
             else:
-                logger.warning(f"[API返回] ak.stock_zh_a_hist 返回空数据")
+                logger.warning(f"[API返回] ak.stock_zh_a_hist_em 返回空数据")
                 return pd.DataFrame()
 
         except Exception as e:
