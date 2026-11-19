@@ -444,8 +444,8 @@ class MarketAnalyzer:
             indices_text += f"- **{idx.name}**: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
         
         # 板块信息
-        top_text = "、".join([s['name'] for s in overview.top_sectors[:3]])
-        bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]])
+        top_text = "、".join([s['name'] for s in overview.top_sectors[:3]]) or "暂无数据"
+        bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]]) or "暂无数据"
         
         total_amount_text = (
             f"{overview.total_amount:.0f}亿"
