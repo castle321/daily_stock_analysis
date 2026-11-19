@@ -331,6 +331,11 @@ class MarketAnalyzer:
         top_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.top_sectors[:3]])
         bottom_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.bottom_sectors[:3]])
         
+        total_amount_text = (
+            f"{overview.total_amount:.0f} 亿元"
+            if overview.total_amount is not None else "暂无数据"
+        )
+
         # 新闻信息 - 支持 SearchResult 对象或字典
         news_text = ""
         for i, n in enumerate(news[:6], 1):
@@ -367,7 +372,7 @@ class MarketAnalyzer:
 ## 市场概况
 - 上涨: {overview.up_count if overview.up_count is not None else "暂无数据"} 家 | 下跌: {overview.down_count if overview.down_count is not None else "暂无数据"} 家 | 平盘: {overview.flat_count if overview.flat_count is not None else "暂无数据"} 家
 - 涨停: {overview.limit_up_count if overview.limit_up_count is not None else "暂无数据"} 家 | 跌停: {overview.limit_down_count if overview.limit_down_count is not None else "暂无数据"} 家
-- 两市成交额: {f"{overview.total_amount:.0f} 亿元" if overview.total_amount is not None else "暂无数据"}
+- 两市成交额: {total_amount_text}
 
 ## 板块表现
 领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
@@ -435,6 +440,11 @@ class MarketAnalyzer:
         top_text = "、".join([s['name'] for s in overview.top_sectors[:3]])
         bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]])
         
+        total_amount_text = (
+            f"{overview.total_amount:.0f}亿"
+            if overview.total_amount is not None else "暂无数据"
+        )
+
         report = f"""## 📊 {overview.date} 大盘复盘
 
 ### 一、市场总结
@@ -450,7 +460,7 @@ class MarketAnalyzer:
 | 下跌家数 | {overview.down_count if overview.down_count is not None else "暂无数据"} |
 | 涨停 | {overview.limit_up_count if overview.limit_up_count is not None else "暂无数据"} |
 | 跌停 | {overview.limit_down_count if overview.limit_down_count is not None else "暂无数据"} |
-| 两市成交额 | {f"{overview.total_amount:.0f}亿" if overview.total_amount is not None else "暂无数据"} |
+| 两市成交额 | {total_amount_text} |
 
 ### 四、板块表现
 - **领涨**: {top_text}
