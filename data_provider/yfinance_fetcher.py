@@ -240,23 +240,37 @@ class YfinanceFetcher(BaseFetcher):
             for ak_code, (yf_code, name) in yf_mapping.items():
                 try:
                     ticker = yf.Ticker(yf_code)
-                    # 获取最近2天数据以计算涨跌
-                    hist = ticker.history(period='2d')
-                    if hist.empty:
+                    # 扩大到最近5个自然日，避免节假日/数据延迟时只返回一天。
+                    # 只有至少两条有效交易日记录，才能计算真实涨跌幅。
+                    hist = ticker.history(period='5d')
+                    if hist is None or hist.empty or len(hist) < 2:
+                        logger.warning(
+                            f"[Yfinance] 指数 {name} 历史数据不足（"
+                            f"{0 if hist is None else len(hist)} 条），跳过，避免用当日价格伪造昨收"
+                        )
                         continue
 
                     today = hist.iloc[-1]
-                    prev = hist.iloc[-2] if len(hist) > 1 else today
+                    prev = hist.iloc[-2]
 
                     price = float(today['Close'])
                     prev_close = float(prev['Close'])
-                    change = price - prev_close
-                    change_pct = (change / prev_close) * 100 if prev_close else 0
-
-                    # 振幅
                     high = float(today['High'])
                     low = float(today['Low'])
-                    amplitude = ((high - low) / prev_close * 100) if prev_close else 0
+
+                    # 过滤 NaN/无效价格，避免生成 0.00% 等误导性数据。
+                    if (
+                        not pd.notna(price) or not pd.notna(prev_close)
+                        or price <= 0 or prev_close <= 0
+                    ):
+                        logger.warning(f"[Yfinance] 指数 {name} 收盘价/昨收无效，跳过")
+                        continue
+
+                    change = price - prev_close
+                    change_pct = (change / prev_close) * 100
+
+                    # 振幅
+                    amplitude = ((high - low) / prev_close * 100) if pd.notna(high) and pd.notna(low) else 0.0
 
                     results.append({
                         'code': ak_code,
