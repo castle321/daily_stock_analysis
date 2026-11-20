@@ -3,6 +3,7 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -121,6 +122,81 @@ class MarketDataFallbackTests(unittest.TestCase):
 
         self.assertEqual(fetcher.get_sector_rankings(5), expected)
         self.assertEqual(calls, ["em", "push2"])
+
+    def test_push2_keeps_top_rankings_when_bottom_request_fails(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._enforce_rate_limit = lambda: None
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.payload
+
+        top_payload = {
+            "rc": 0,
+            "data": {
+                "diff": [
+                    {"f12": "BK001", "f14": "行业A", "f3": 5.2},
+                    {"f12": "BK002", "f14": "行业B", "f3": 3.1},
+                ]
+            },
+        }
+
+        with patch(
+            "requests.get",
+            side_effect=[FakeResponse(top_payload), RuntimeError("跌幅榜请求超时")],
+        ) as mocked_get:
+            top, bottom = fetcher._get_sector_rankings_from_push2(2)
+
+        self.assertEqual(
+            top,
+            [
+                {"name": "行业A", "change_pct": 5.2},
+                {"name": "行业B", "change_pct": 3.1},
+            ],
+        )
+        self.assertEqual(bottom, [])
+        self.assertEqual(mocked_get.call_count, 2)
+
+    def test_push2_keeps_bottom_rankings_when_top_request_fails(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._enforce_rate_limit = lambda: None
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "rc": 0,
+                    "data": {
+                        "diff": [
+                            {"f12": "BK003", "f14": "行业C", "f3": -4.5},
+                            {"f12": "BK004", "f14": "行业D", "f3": -2.8},
+                        ]
+                    },
+                }
+
+        with patch(
+            "requests.get",
+            side_effect=[RuntimeError("涨幅榜请求超时"), FakeResponse()],
+        ) as mocked_get:
+            top, bottom = fetcher._get_sector_rankings_from_push2(2)
+
+        self.assertEqual(top, [])
+        self.assertEqual(
+            bottom,
+            [
+                {"name": "行业C", "change_pct": -4.5},
+                {"name": "行业D", "change_pct": -2.8},
+            ],
+        )
+        self.assertEqual(mocked_get.call_count, 2)
 
     def test_sector_rankings_returns_none_when_all_free_sources_fail(self):
         fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
