@@ -73,6 +73,7 @@ class MarketOverview:
     # 板块涨幅榜
     top_sectors: List[Dict] = field(default_factory=list)     # 涨幅前5板块
     bottom_sectors: List[Dict] = field(default_factory=list)  # 跌幅前5板块
+    sector_source: Optional[str] = None  # 板块排行实际数据来源
 
 
 class MarketAnalyzer:
@@ -198,7 +199,11 @@ class MarketAnalyzer:
             if top_sectors or bottom_sectors:
                 overview.top_sectors = top_sectors
                 overview.bottom_sectors = bottom_sectors
+                overview.sector_source = getattr(
+                    self.data_manager, "last_sector_source", None
+                )
 
+                logger.info(f"[大盘] 板块排行数据来源: {overview.sector_source or '未知'}")
                 logger.info(f"[大盘] 领涨板块: {[s['name'] for s in overview.top_sectors]}")
                 logger.info(f"[大盘] 领跌板块: {[s['name'] for s in overview.bottom_sectors]}")
 
@@ -330,7 +335,8 @@ class MarketAnalyzer:
         # 板块信息
         top_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.top_sectors[:3]])
         bottom_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.bottom_sectors[:3]])
-        
+        sector_source_text = overview.sector_source or "未知"
+
         total_amount_text = (
             f"{overview.total_amount:.0f} 亿元"
             if overview.total_amount is not None else "暂无数据"
@@ -378,6 +384,7 @@ class MarketAnalyzer:
 - 两市成交额: {total_amount_text}
 
 ## 板块表现
+数据来源: {sector_source_text if top_sectors_text or bottom_sectors_text else "暂无数据"}
 领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
 领跌: {bottom_sectors_text if bottom_sectors_text else "暂无数据"}
 
@@ -446,7 +453,8 @@ class MarketAnalyzer:
         # 板块信息
         top_text = "、".join([s['name'] for s in overview.top_sectors[:3]]) or "暂无数据"
         bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]]) or "暂无数据"
-        
+        sector_source_text = overview.sector_source or "未知"
+
         total_amount_text = (
             f"{overview.total_amount:.0f}亿"
             if overview.total_amount is not None else "暂无数据"
@@ -470,6 +478,7 @@ class MarketAnalyzer:
 | 两市成交额 | {total_amount_text} |
 
 ### 四、板块表现
+- **数据来源**: {sector_source_text if top_text != "暂无数据" or bottom_text != "暂无数据" else "暂无数据"}
 - **领涨**: {top_text}
 - **领跌**: {bottom_text}
 
