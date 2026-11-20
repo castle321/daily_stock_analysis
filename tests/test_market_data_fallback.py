@@ -4,6 +4,9 @@
 import unittest
 from types import SimpleNamespace
 
+import pandas as pd
+
+from data_provider.akshare_fetcher import AkshareFetcher
 from data_provider.base import DataFetcherManager
 from src.market_analyzer import MarketAnalyzer, MarketOverview
 
@@ -77,6 +80,55 @@ class MarketDataFallbackTests(unittest.TestCase):
         self.assertIn("输入没有资金流向数据时", prompt)
         self.assertIn("不得根据新闻推断当日市场涨跌方向", prompt)
         self.assertIn("后市观察", prompt)
+
+    def test_sector_ranking_normalization_filters_invalid_rows_and_sorts(self):
+        source = pd.DataFrame([
+            {"板块名称": "行业A", "涨跌幅": 2.5},
+            {"板块名称": "行业B", "涨跌幅": -3.2},
+            {"板块名称": "行业C", "涨跌幅": float("inf")},
+            {"板块名称": "", "涨跌幅": 8.0},
+            {"板块名称": "行业D", "涨跌幅": "invalid"},
+        ])
+
+        top, bottom = AkshareFetcher._normalize_sector_rankings(source, n=2)
+
+        self.assertEqual(top, [{"name": "行业A", "change_pct": 2.5}])
+        self.assertEqual(bottom, [{"name": "行业B", "change_pct": -3.2}])
+
+    def test_sector_rankings_falls_back_to_push2_after_akshare_failure(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        expected = (
+            [{"name": "行业A", "change_pct": 3.0}],
+            [{"name": "行业B", "change_pct": -2.0}],
+        )
+        calls = []
+
+        def fail_em(n):
+            calls.append("em")
+            raise RuntimeError("AkShare EM unavailable")
+
+        def push2(n):
+            calls.append("push2")
+            return expected
+
+        def ths(n):
+            calls.append("ths")
+            return None
+
+        fetcher._get_sector_rankings_from_em = fail_em
+        fetcher._get_sector_rankings_from_push2 = push2
+        fetcher._get_sector_rankings_from_ths = ths
+
+        self.assertEqual(fetcher.get_sector_rankings(5), expected)
+        self.assertEqual(calls, ["em", "push2"])
+
+    def test_sector_rankings_returns_none_when_all_free_sources_fail(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._get_sector_rankings_from_em = lambda n: None
+        fetcher._get_sector_rankings_from_push2 = lambda n: None
+        fetcher._get_sector_rankings_from_ths = lambda n: None
+
+        self.assertIsNone(fetcher.get_sector_rankings(5))
 
 
 if __name__ == "__main__":
