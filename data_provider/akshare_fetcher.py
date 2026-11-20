@@ -1405,44 +1405,165 @@ class AkshareFetcher(BaseFetcher):
             logger.error(f"[Akshare] 获取市场统计失败: {e}")
             return None
 
+    @staticmethod
+    def _normalize_sector_rankings(
+        df: Optional[pd.DataFrame],
+        n: int = 5,
+        name_columns: Optional[List[str]] = None,
+        change_columns: Optional[List[str]] = None,
+    ) -> Optional[Tuple[List[Dict], List[Dict]]]:
+        """统一校验并标准化行业板块排行数据。"""
+        if df is None or df.empty:
+            return None
+
+        name_columns = name_columns or ["板块名称", "板块", "行业名称", "名称"]
+        change_columns = change_columns or ["涨跌幅", "涨跌幅(%)", "涨跌幅％", "涨跌幅（%）"]
+        name_col = next((column for column in name_columns if column in df.columns), None)
+        change_col = next((column for column in change_columns if column in df.columns), None)
+        if name_col is None or change_col is None:
+            logger.warning(
+                "[板块排行] 返回字段不完整，名称字段=%s，涨跌幅字段=%s",
+                list(df.columns), change_columns
+            )
+            return None
+
+        rows = []
+        for _, row in df.iterrows():
+            name = str(row.get(name_col, "")).strip()
+            try:
+                change_pct = float(pd.to_numeric(row.get(change_col), errors="coerce"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+
+            if not name or name.lower() in {"nan", "none", "-"}:
+                continue
+            if not pd.notna(change_pct) or change_pct in (float("inf"), float("-inf")):
+                continue
+
+            rows.append({"name": name, "change_pct": change_pct})
+
+        if not rows:
+            return None
+
+        # 去重，避免接口异常时同一板块重复进入榜单。
+        unique_rows = {item["name"]: item for item in rows}
+        ranked = list(unique_rows.values())
+        top = sorted(ranked, key=lambda item: item["change_pct"], reverse=True)[:n]
+        bottom = sorted(ranked, key=lambda item: item["change_pct"])[:n]
+        return (top, bottom) if top or bottom else None
+
+    def _get_sector_rankings_from_em(self, n: int) -> Optional[Tuple[List[Dict], List[Dict]]]:
+        """优先使用 AkShare 封装的东方财富行业板块接口。"""
+        import akshare as ak
+
+        self._set_random_user_agent()
+        self._enforce_rate_limit()
+        df = ak.stock_board_industry_name_em()
+        return self._normalize_sector_rankings(df, n)
+
+    def _get_sector_rankings_from_push2(self, n: int) -> Optional[Tuple[List[Dict], List[Dict]]]:
+        """东方财富 AkShare 接口失败时，直接请求 Push2 行业板块行情接口。"""
+        import requests
+
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Referer": "https://quote.eastmoney.com/",
+        }
+        params = {
+            "pn": "1",
+            "pz": str(max(n, 5)),
+            "po": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fid": "f3",
+            "fs": "m:90+t:2+f:!50",
+            "fields": "f12,f14,f3",
+        }
+
+        rows = []
+        # 分别请求涨幅榜和跌幅榜，避免只取到涨幅端而遗漏跌幅端。
+        for sort_order in ("1", "0"):
+            self._enforce_rate_limit()
+            params["po"] = sort_order
+            response = requests.get(url, params=params, headers=headers, timeout=15)
+            response.raise_for_status()
+            payload = response.json()
+
+            if not isinstance(payload, dict) or payload.get("rc", 0) not in (0, None):
+                raise DataFetchError(f"东方财富 Push2 返回异常: {payload!r}")
+
+            data = payload.get("data") or {}
+            diff = data.get("diff") or []
+            if not isinstance(diff, list) or not diff:
+                raise DataFetchError("东方财富 Push2 未返回有效行业板块数据")
+
+            for item in diff:
+                if not isinstance(item, dict):
+                    continue
+                rows.append({
+                    "板块名称": item.get("f14"),
+                    "涨跌幅": item.get("f3"),
+                    "板块代码": item.get("f12"),
+                })
+
+        result = self._normalize_sector_rankings(pd.DataFrame(rows), n)
+        if result is None:
+            raise DataFetchError("东方财富 Push2 行业板块数据校验未通过")
+        return result
+
+    def _get_sector_rankings_from_ths(self, n: int) -> Optional[Tuple[List[Dict], List[Dict]]]:
+        """最后尝试 AkShare 提供的同花顺行业板块公开接口。"""
+        import akshare as ak
+
+        method = getattr(ak, "stock_board_industry_name_ths", None)
+        if not callable(method):
+            raise DataFetchError("当前 AkShare 版本不提供同花顺行业板块接口")
+
+        self._enforce_rate_limit()
+        df = method()
+        result = self._normalize_sector_rankings(df, n)
+        if result is None:
+            raise DataFetchError("同花顺行业板块数据为空或字段校验未通过")
+        return result
+
     def get_sector_rankings(self, n: int = 5) -> Optional[Tuple[List[Dict], List[Dict]]]:
         """
-        获取板块涨跌榜 (东财接口)
+        获取 A 股行业板块涨跌榜。
+
+        降级顺序：
+        1. AkShare 东方财富接口
+        2. 东方财富 Push2 HTTP 接口（同供应商的独立调用方式）
+        3. AkShare 同花顺行业板块接口（跨供应商备用）
+
+        所有来源均失败或数据无效时返回 None，不生成虚假排行。
         """
-        import akshare as ak
-        try:
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
+        sources = [
+            ("AkShare-东方财富", self._get_sector_rankings_from_em),
+            ("东方财富-Push2", self._get_sector_rankings_from_push2),
+            ("AkShare-同花顺", self._get_sector_rankings_from_ths),
+        ]
 
-            # 获取行业板块行情
-            df = ak.stock_board_industry_name_em()
+        for source_name, fetch_method in sources:
+            try:
+                result = fetch_method(n)
+                if (
+                    isinstance(result, tuple)
+                    and len(result) == 2
+                    and (bool(result[0]) or bool(result[1]))
+                ):
+                    logger.info(
+                        "[板块排行] %s 获取成功：领涨 %d 个，领跌 %d 个",
+                        source_name, len(result[0]), len(result[1])
+                    )
+                    return result
+                logger.warning("[板块排行] %s 未返回有效排行，尝试下一个来源", source_name)
+            except Exception as e:
+                logger.warning("[板块排行] %s 获取失败，尝试下一个来源：%s", source_name, e)
 
-            if df is not None and not df.empty:
-                change_col = '涨跌幅'
-                if change_col in df.columns:
-                    df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
-                    df = df.dropna(subset=[change_col])
-
-                    # 涨幅前n
-                    top = df.nlargest(n, change_col)
-                    top_sectors = [
-                        {'name': row['板块名称'], 'change_pct': row[change_col]}
-                        for _, row in top.iterrows()
-                    ]
-
-                    # 跌幅前n
-                    bottom = df.nsmallest(n, change_col)
-                    bottom_sectors = [
-                        {'name': row['板块名称'], 'change_pct': row[change_col]}
-                        for _, row in bottom.iterrows()
-                    ]
-
-                    return top_sectors, bottom_sectors
-            return None
-
-        except Exception as e:
-            logger.error(f"[Akshare] 获取板块排行失败: {e}")
-            return None
+        logger.error("[板块排行] 所有免费数据源均不可用")
+        return None
 
 
 if __name__ == "__main__":
