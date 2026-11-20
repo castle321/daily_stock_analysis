@@ -40,7 +40,6 @@ import logging
 import sys
 import time
 import uuid
-from datetime import datetime, timezone, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import List, Optional
@@ -52,10 +51,17 @@ from src.core.pipeline import StockAnalysisPipeline
 from src.core.market_review import run_market_review
 from src.search_service import SearchService
 from src.analyzer import GeminiAnalyzer
+from src.time_utils import china_time_tuple, now_china
 
 # 配置日志格式
 LOG_FORMAT = '%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+
+def _china_formatter() -> logging.Formatter:
+    formatter = logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT)
+    formatter.converter = china_time_tuple
+    return formatter
 
 
 def setup_logging(debug: bool = False, log_dir: str = "./logs") -> None:
@@ -73,7 +79,7 @@ def setup_logging(debug: bool = False, log_dir: str = "./logs") -> None:
     log_path.mkdir(parents=True, exist_ok=True)
     
     # 日志文件路径（按日期分文件）
-    today_str = datetime.now().strftime('%Y%m%d')
+    today_str = now_china().strftime('%Y%m%d')
     log_file = log_path / f"stock_analysis_{today_str}.log"
     debug_log_file = log_path / f"stock_analysis_debug_{today_str}.log"
     
@@ -84,7 +90,7 @@ def setup_logging(debug: bool = False, log_dir: str = "./logs") -> None:
     # Handler 1: 控制台输出
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
-    console_handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    console_handler.setFormatter(_china_formatter())
     root_logger.addHandler(console_handler)
     
     # Handler 2: 常规日志文件（INFO 级别，10MB 轮转）
@@ -95,7 +101,7 @@ def setup_logging(debug: bool = False, log_dir: str = "./logs") -> None:
         encoding='utf-8'
     )
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    file_handler.setFormatter(_china_formatter())
     root_logger.addHandler(file_handler)
     
     # Handler 3: 调试日志文件（DEBUG 级别，包含所有详细信息）
@@ -106,7 +112,7 @@ def setup_logging(debug: bool = False, log_dir: str = "./logs") -> None:
         encoding='utf-8'
     )
     debug_handler.setLevel(logging.DEBUG)
-    debug_handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    debug_handler.setFormatter(_china_formatter())
     root_logger.addHandler(debug_handler)
     
     # 降低第三方库的日志级别
@@ -291,8 +297,7 @@ def run_full_analysis(
                 logger.info("正在创建飞书云文档...")
 
                 # 1. 准备标题 "01-01 13:01大盘复盘"
-                tz_cn = timezone(timedelta(hours=8))
-                now = datetime.now(tz_cn)
+                now = now_china()
                 doc_title = f"{now.strftime('%Y-%m-%d %H:%M')} 大盘复盘"
 
                 # 2. 准备内容 (拼接个股分析和大盘复盘)
@@ -373,7 +378,7 @@ def main() -> int:
     
     logger.info("=" * 60)
     logger.info("A股自选股智能分析系统 启动")
-    logger.info(f"运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"运行时间: {now_china().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
     
     # 验证配置

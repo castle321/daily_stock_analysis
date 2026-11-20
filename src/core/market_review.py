@@ -11,13 +11,13 @@ A股自选股智能分析系统 - 大盘复盘模块
 """
 
 import logging
-from datetime import datetime
 from typing import Optional
 
 from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
 from src.search_service import SearchService
 from src.analyzer import GeminiAnalyzer
+from src.time_utils import now_china
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def run_market_review(
         
         if review_report:
             # 保存报告到文件
-            date_str = datetime.now().strftime('%Y%m%d')
+            date_str = now_china().strftime('%Y%m%d')
             report_filename = f"market_review_{date_str}.md"
             filepath = notifier.save_report_to_file(
                 f"# 🎯 大盘复盘\n\n{review_report}", 
