@@ -1482,36 +1482,75 @@ class AkshareFetcher(BaseFetcher):
             "fields": "f12,f14,f3",
         }
 
-        rows = []
-        # 分别请求涨幅榜和跌幅榜，避免只取到涨幅端而遗漏跌幅端。
-        for sort_order in ("1", "0"):
-            self._enforce_rate_limit()
-            params["po"] = sort_order
-            response = requests.get(url, params=params, headers=headers, timeout=15)
-            response.raise_for_status()
-            payload = response.json()
+        # 两个榜单独立请求、独立校验：单侧故障不能丢弃另一侧已经取得的数据。
+        rankings = {"1": [], "0": []}
+        errors = {}
 
-            if not isinstance(payload, dict) or payload.get("rc", 0) not in (0, None):
-                raise DataFetchError(f"东方财富 Push2 返回异常: {payload!r}")
+        for sort_order, label in (("1", "涨幅榜"), ("0", "跌幅榜")):
+            try:
+                self._enforce_rate_limit()
+                request_params = dict(params)
+                request_params["po"] = sort_order
+                response = requests.get(
+                    url,
+                    params=request_params,
+                    headers=headers,
+                    timeout=15,
+                )
+                response.raise_for_status()
+                payload = response.json()
 
-            data = payload.get("data") or {}
-            diff = data.get("diff") or []
-            if not isinstance(diff, list) or not diff:
-                raise DataFetchError("东方财富 Push2 未返回有效行业板块数据")
+                if not isinstance(payload, dict) or payload.get("rc") != 0:
+                    raise DataFetchError(f"接口返回异常: {payload!r}")
 
-            for item in diff:
-                if not isinstance(item, dict):
-                    continue
-                rows.append({
-                    "板块名称": item.get("f14"),
-                    "涨跌幅": item.get("f3"),
-                    "板块代码": item.get("f12"),
-                })
+                data = payload.get("data")
+                diff = data.get("diff") if isinstance(data, dict) else None
+                if not isinstance(diff, list) or not diff:
+                    raise DataFetchError("接口未返回有效板块列表")
 
-        result = self._normalize_sector_rankings(pd.DataFrame(rows), n)
-        if result is None:
-            raise DataFetchError("东方财富 Push2 行业板块数据校验未通过")
-        return result
+                rows = []
+                for item in diff:
+                    if not isinstance(item, dict):
+                        continue
+                    rows.append({
+                        "板块名称": item.get("f14"),
+                        "涨跌幅": item.get("f3"),
+                        "板块代码": item.get("f12"),
+                    })
+
+                normalized = self._normalize_sector_rankings(
+                    pd.DataFrame(rows), n
+                )
+                if normalized is None:
+                    raise DataFetchError("返回数据未通过字段和数值校验")
+
+                # po=1 只取涨幅榜；po=0 只取跌幅榜，避免用单侧数据推导另一侧。
+                rankings[sort_order] = normalized[0] if sort_order == "1" else normalized[1]
+                if not rankings[sort_order]:
+                    raise DataFetchError("有效排行为空")
+
+                logger.info(
+                    "[板块排行] Push2 %s获取成功：%d 条",
+                    label, len(rankings[sort_order])
+                )
+            except Exception as e:
+                errors[label] = str(e)
+                logger.warning("[板块排行] Push2 %s获取失败：%s", label, e)
+
+        top = rankings["1"]
+        bottom = rankings["0"]
+        if not top and not bottom:
+            raise DataFetchError(
+                "东方财富 Push2 涨幅榜和跌幅榜均不可用: "
+                + "; ".join(f"{key}: {value}" for key, value in errors.items())
+            )
+
+        if errors:
+            logger.warning(
+                "[板块排行] Push2 部分数据可用：领涨 %d 条，领跌 %d 条",
+                len(top), len(bottom)
+            )
+        return top, bottom
 
     def _get_sector_rankings_from_ths(self, n: int) -> Optional[Tuple[List[Dict], List[Dict]]]:
         """最后尝试 AkShare 提供的同花顺行业板块公开接口。"""
