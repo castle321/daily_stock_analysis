@@ -291,7 +291,8 @@ class DataFetcherManager:
             fetchers: 数据源列表（可选，默认按优先级自动创建）
         """
         self._fetchers: List[BaseFetcher] = []
-        
+        self.last_sector_source: Optional[str] = None
+
         if fetchers:
             # 按优先级排序
             self._fetchers = sorted(fetchers, key=lambda f: f.priority)
@@ -770,40 +771,147 @@ class DataFetcherManager:
         return result
 
     def get_main_indices(self) -> List[Dict[str, Any]]:
-        """获取主要指数实时行情（自动切换数据源）"""
+        """获取主要指数行情；校验关键字段，并用后续数据源补齐缺失指数。"""
+        expected_codes = [
+            "sh000001", "sz399001", "sz399006",
+            "sh000688", "sh000016", "sh000300",
+        ]
+        code_aliases = {
+            "000001": "sh000001", "000001.SH": "sh000001", "sh000001": "sh000001",
+            "399001": "sz399001", "399001.SZ": "sz399001", "sz399001": "sz399001",
+            "399006": "sz399006", "399006.SZ": "sz399006", "sz399006": "sz399006",
+            "000688": "sh000688", "000688.SH": "sh000688", "sh000688": "sh000688",
+            "000016": "sh000016", "000016.SH": "sh000016", "sh000016": "sh000016",
+            "000300": "sh000300", "000300.SH": "sh000300", "sh000300": "sh000300",
+        }
+        merged: Dict[str, Dict[str, Any]] = {}
+
         for fetcher in self._fetchers:
             try:
                 data = fetcher.get_main_indices()
-                if data:
-                    logger.info(f"[{fetcher.name}] 获取指数行情成功")
-                    return data
+                if not data:
+                    continue
+
+                accepted = 0
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    raw_code = str(item.get("code", "")).strip()
+                    code = code_aliases.get(raw_code.upper(), code_aliases.get(raw_code, raw_code))
+                    try:
+                        current = float(item.get("current"))
+                        prev_close = float(item.get("prev_close"))
+                    except (TypeError, ValueError):
+                        continue
+
+                    # 当前点位和昨收必须有效，否则不能把默认 0 当成真实行情。
+                    if not (pd.notna(current) and pd.notna(prev_close) and current > 0 and prev_close > 0):
+                        continue
+
+                    change = current - prev_close
+                    normalized = dict(item)
+                    normalized.update({
+                        "code": code,
+                        "current": current,
+                        "prev_close": prev_close,
+                        "change": change,
+                        "change_pct": change / prev_close * 100,
+                    })
+                    if code not in merged:
+                        merged[code] = normalized
+                        accepted += 1
+
+                logger.info(
+                    f"[{fetcher.name}] 指数行情有效 {accepted}/{len(data)} 个，"
+                    f"累计覆盖 {len(merged)}/{len(expected_codes)} 个"
+                )
+                if len(merged) >= len(expected_codes):
+                    break
             except Exception as e:
                 logger.warning(f"[{fetcher.name}] 获取指数行情失败: {e}")
                 continue
-        return []
+
+        return [merged[code] for code in expected_codes if code in merged]
 
     def get_market_stats(self) -> Dict[str, Any]:
-        """获取市场涨跌统计（自动切换数据源）"""
+        """获取市场统计；关键统计缺失或明显无效时继续尝试备用数据源。"""
         for fetcher in self._fetchers:
             try:
                 data = fetcher.get_market_stats()
-                if data:
-                    logger.info(f"[{fetcher.name}] 获取市场统计成功")
-                    return data
+                if not isinstance(data, dict) or not data:
+                    continue
+
+                required = ("up_count", "down_count", "flat_count", "total_amount")
+                if any(data.get(key) is None for key in required):
+                    logger.warning(f"[{fetcher.name}] 市场统计缺少关键字段，尝试备用数据源")
+                    continue
+
+                try:
+                    counts = [float(data[key]) for key in required[:3]]
+                    amount = float(data["total_amount"])
+                    if not all(np.isfinite(value) and value >= 0 for value in counts):
+                        raise ValueError("涨跌家数包含无效数值")
+                    breadth = sum(int(value) for value in counts)
+                except (TypeError, ValueError, OverflowError):
+                    breadth, amount = 0, 0
+
+                if breadth <= 0 or not np.isfinite(amount) or amount <= 0:
+                    logger.warning(f"[{fetcher.name}] 市场统计无效（家数={breadth}, 成交额={amount}），尝试备用数据源")
+                    continue
+
+                logger.info(f"[{fetcher.name}] 获取有效市场统计成功")
+                return data
             except Exception as e:
                 logger.warning(f"[{fetcher.name}] 获取市场统计失败: {e}")
                 continue
         return {}
 
     def get_sector_rankings(self, n: int = 5) -> Tuple[List[Dict], List[Dict]]:
-        """获取板块涨跌榜（自动切换数据源）"""
+        """获取板块涨跌榜；空榜不视为成功，继续尝试备用数据源。"""
+        self.last_sector_source = None
         for fetcher in self._fetchers:
             try:
                 data = fetcher.get_sector_rankings(n)
-                if data:
-                    logger.info(f"[{fetcher.name}] 获取板块排行成功")
+                if (
+                    isinstance(data, tuple) and len(data) == 2
+                    and (bool(data[0]) or bool(data[1]))
+                ):
+                    # AkShareFetcher 可进一步标记实际使用的子数据源（EM / Push2 / THS）。
+                    self.last_sector_source = (
+                        getattr(fetcher, "last_sector_source", None) or fetcher.name
+                    )
+                    logger.info(
+                        f"[{fetcher.name}] 获取板块排行成功，实际来源: "
+                        f"{self.last_sector_source}"
+                    )
                     return data
             except Exception as e:
                 logger.warning(f"[{fetcher.name}] 获取板块排行失败: {e}")
                 continue
         return [], []
+
+    def get_sector_constituent_count(self, sector_name: str) -> Optional[int]:
+        """通过实际提供板块排行的 AkShareFetcher 查询成分股数量。"""
+        source = self.last_sector_source or ""
+
+        if source not in ("AkShare-东方财富", "东方财富-Push2"):
+            return None
+
+        for fetcher in self._fetchers:
+            fetcher_source = getattr(fetcher, "last_sector_source", None)
+
+            if fetcher_source != source:
+                continue
+
+            method = getattr(fetcher, "get_sector_constituent_count", None)
+            if not callable(method):
+                return None
+
+            try:
+                return method(sector_name)
+            except Exception as e:
+                logger.warning("[板块成分] %s 查询失败：%s", sector_name, e)
+                return None
+
+        logger.warning("[板块成分] 未找到排行来源对应的数据源：%s", source)
+        return None

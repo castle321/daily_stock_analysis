@@ -23,7 +23,7 @@ from src.search_service import SearchService
 from data_provider.base import DataFetcherManager
 
 logger = logging.getLogger(__name__)
-
+SMALL_SECTOR_CONSTITUENT_THRESHOLD = 3
 
 @dataclass
 class MarketIndex:
@@ -61,18 +61,20 @@ class MarketIndex:
 class MarketOverview:
     """市场概览数据"""
     date: str                           # 日期
+    capture_time: str = ""
     indices: List[MarketIndex] = field(default_factory=list)  # 主要指数
-    up_count: int = 0                   # 上涨家数
-    down_count: int = 0                 # 下跌家数
-    flat_count: int = 0                 # 平盘家数
-    limit_up_count: int = 0             # 涨停家数
-    limit_down_count: int = 0           # 跌停家数
-    total_amount: float = 0.0           # 两市成交额（亿元）
+    up_count: Optional[int] = None      # 上涨家数；None 表示数据缺失
+    down_count: Optional[int] = None    # 下跌家数；None 表示数据缺失
+    flat_count: Optional[int] = None    # 平盘家数；None 表示数据缺失
+    limit_up_count: Optional[int] = None    # 涨停家数；None 表示数据缺失
+    limit_down_count: Optional[int] = None  # 跌停家数；None 表示数据缺失
+    total_amount: Optional[float] = None    # 两市成交额（亿元）；None 表示数据缺失
     # north_flow: float = 0.0           # 北向资金净流入（亿元）- 已废弃，接口不可用
     
     # 板块涨幅榜
     top_sectors: List[Dict] = field(default_factory=list)     # 涨幅前5板块
     bottom_sectors: List[Dict] = field(default_factory=list)  # 跌幅前5板块
+    sector_source: Optional[str] = None  # 板块排行实际数据来源
 
 
 class MarketAnalyzer:
@@ -107,8 +109,13 @@ class MarketAnalyzer:
         Returns:
             MarketOverview: 市场概览数据对象
         """
-        today = datetime.now().strftime('%Y-%m-%d')
-        overview = MarketOverview(date=today)
+        now = datetime.now()
+        today = now.strftime('%Y-%m-%d')
+
+        overview = MarketOverview(
+            date=today,
+            capture_time=now.strftime('%Y-%m-%d %H:%M:%S')
+        )
         
         # 1. 获取主要指数行情
         overview.indices = self._get_main_indices()
@@ -144,13 +151,13 @@ class MarketAnalyzer:
                         current=item['current'],
                         change=item['change'],
                         change_pct=item['change_pct'],
-                        open=item['open'],
-                        high=item['high'],
-                        low=item['low'],
-                        prev_close=item['prev_close'],
-                        volume=item['volume'],
-                        amount=item['amount'],
-                        amplitude=item['amplitude']
+                        open=item.get('open', 0.0) or 0.0,
+                        high=item.get('high', 0.0) or 0.0,
+                        low=item.get('low', 0.0) or 0.0,
+                        prev_close=item.get('prev_close', 0.0) or 0.0,
+                        volume=item.get('volume', 0.0) or 0.0,
+                        amount=item.get('amount', 0.0) or 0.0,
+                        amplitude=item.get('amplitude', 0.0) or 0.0
                     )
                     indices.append(index)
 
@@ -172,33 +179,61 @@ class MarketAnalyzer:
             stats = self.data_manager.get_market_stats()
 
             if stats:
-                overview.up_count = stats.get('up_count', 0)
-                overview.down_count = stats.get('down_count', 0)
-                overview.flat_count = stats.get('flat_count', 0)
-                overview.limit_up_count = stats.get('limit_up_count', 0)
-                overview.limit_down_count = stats.get('limit_down_count', 0)
-                overview.total_amount = stats.get('total_amount', 0.0)
+                overview.up_count = stats.get('up_count')
+                overview.down_count = stats.get('down_count')
+                overview.flat_count = stats.get('flat_count')
+                overview.limit_up_count = stats.get('limit_up_count')
+                overview.limit_down_count = stats.get('limit_down_count')
+                overview.total_amount = stats.get('total_amount')
 
-                logger.info(f"[大盘] 涨:{overview.up_count} 跌:{overview.down_count} 平:{overview.flat_count} "
-                          f"涨停:{overview.limit_up_count} 跌停:{overview.limit_down_count} "
-                          f"成交额:{overview.total_amount:.0f}亿")
+                amount_text = f"{overview.total_amount:.0f}亿" if overview.total_amount is not None else "暂无数据"
+                logger.info(
+                    f"[大盘] 涨:{overview.up_count} 跌:{overview.down_count} 平:{overview.flat_count} "
+                    f"涨停:{overview.limit_up_count} 跌停:{overview.limit_down_count} 成交额:{amount_text}"
+                )
 
         except Exception as e:
             logger.error(f"[大盘] 获取涨跌统计失败: {e}")
 
     def _get_sector_rankings(self, overview: MarketOverview):
         """获取板块涨跌榜"""
+        overview.top_sectors = []
+        overview.bottom_sectors = []
+        overview.sector_source = None
+
         try:
             logger.info("[大盘] 获取板块涨跌榜...")
 
             top_sectors, bottom_sectors = self.data_manager.get_sector_rankings(5)
 
             if top_sectors or bottom_sectors:
-                overview.top_sectors = top_sectors
-                overview.bottom_sectors = bottom_sectors
+                overview.top_sectors = top_sectors or []
+                overview.bottom_sectors = bottom_sectors or []
+                overview.sector_source = getattr(
+                    self.data_manager, "last_sector_source", None
+                )
 
-                logger.info(f"[大盘] 领涨板块: {[s['name'] for s in overview.top_sectors]}")
-                logger.info(f"[大盘] 领跌板块: {[s['name'] for s in overview.bottom_sectors]}")
+                logger.info(
+                    f"[大盘] 板块排行数据来源: "
+                    f"{overview.sector_source or '未知'}"
+                )
+                logger.info(
+                    f"[大盘] 领涨板块: "
+                    f"{[s['name'] for s in overview.top_sectors]}"
+                )
+                logger.info(
+                    f"[大盘] 领跌板块: "
+                    f"{[s['name'] for s in overview.bottom_sectors]}"
+                )
+
+                if overview.sector_source in (
+                    "AkShare-东方财富",
+                    "东方财富-Push2",
+                ):
+                    self._enrich_sector_constituent_counts(overview)
+
+            else:
+                logger.warning("[大盘] 板块排行无有效数据")
 
         except Exception as e:
             logger.error(f"[大盘] 获取板块涨跌榜失败: {e}")
@@ -223,6 +258,44 @@ class MarketAnalyzer:
                 
     #     except Exception as e:
     #         logger.warning(f"[大盘] 获取北向资金失败: {e}")
+
+    def _enrich_sector_constituent_counts(self, overview: MarketOverview):
+        """为报告展示的板块补充成分股数量，不影响原始排行。"""
+        get_count = getattr(
+            self.data_manager,
+            "get_sector_constituent_count",
+            None,
+        )
+
+        if not callable(get_count):
+            return
+
+        # 只查询报告实际展示的前三名，两个榜单合计最多 6 个。
+        sectors = (
+            overview.top_sectors[:3]
+            + overview.bottom_sectors[:3]
+        )
+
+        queried = {}
+
+        for sector in sectors:
+            name = sector.get("name")
+            if not name:
+                continue
+
+            if name not in queried:
+                try:
+                    queried[name] = get_count(name)
+                except Exception as e:
+                    logger.warning("[大盘] 查询板块 %s 成分股数量失败：%s", name, e)
+                    queried[name] = None
+
+            count = queried[name]
+            if count is not None and count > 0:
+                sector["constituent_count"] = count
+                sector["small_sample"] = (
+                    count <= SMALL_SECTOR_CONSTITUENT_THRESHOLD
+                )
     
     def search_market_news(self) -> List[Dict]:
         """
@@ -326,9 +399,29 @@ class MarketAnalyzer:
             indices_text += f"- {idx.name}: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
         
         # 板块信息
-        top_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.top_sectors[:3]])
-        bottom_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.bottom_sectors[:3]])
-        
+        def format_prompt_sector(sector):
+            text = f"{sector['name']}({sector['change_pct']:+.2f}%)"
+
+            count = sector.get("constituent_count")
+            if sector.get("small_sample") and count is not None:
+                text += f"[仅{count}只成分股，小样本]"
+
+            return text
+
+        top_sectors_text = ", ".join(
+            format_prompt_sector(s) for s in overview.top_sectors[:3]
+        )
+
+        bottom_sectors_text = ", ".join(
+            format_prompt_sector(s) for s in overview.bottom_sectors[:3]
+        )
+        sector_source_text = overview.sector_source or "未知"
+
+        total_amount_text = (
+            f"{overview.total_amount:.0f} 亿元"
+            if overview.total_amount is not None else "暂无数据"
+        )
+
         # 新闻信息 - 支持 SearchResult 对象或字典
         news_text = ""
         for i, n in enumerate(news[:6], 1):
@@ -348,30 +441,42 @@ class MarketAnalyzer:
 - 禁止输出 JSON 格式
 - 禁止输出代码块
 - emoji 仅在标题处少量使用（每个标题最多1个）
+- 严禁把“暂无数据”或缺失字段当成 0；不得编造成交额、涨跌家数、资金流向或板块信息
+- 成交额、涨跌统计或板块数据缺失时，明确说明数据未获取，不得据此推断资金流向或市场风格
+- 输入没有资金流向数据时，不得描述主力资金、北向资金或行业资金净流入/流出；成交额只能用于描述成交规模，不能代表资金流向
+- 如果主要指数行情缺失，不得使用“上涨、下跌、震荡整理、强势”等词判断当日市场方向；必须明确写明指数行情未获取
+- 如果指数行情、涨跌统计和成交额均缺失，后市展望只能列出待观察事项，不得给出方向性预测
+- 只分析输入中实际存在且有效的数据；新闻只能作为新闻信息，不能替代缺失的行情统计
+- 报告必须注明行情采集时间，不得将盘中行情描述为收盘行情
+- 如果行情采集时间不为空，应原样保留该时间
+- 对标记为小样本的板块，必须明确说明成分股数量较少、代表性有限，不得仅凭其涨跌幅推断整个行业的普遍走势
 
 ---
 
 # 今日市场数据
 
-## 日期
-{overview.date}
+## 日期与采集时间
+
+交易日期：{overview.date}
+行情采集时间：{overview.capture_time or "未知"}
 
 ## 主要指数
 {indices_text if indices_text else "暂无指数数据（接口异常）"}
 
 ## 市场概况
-- 上涨: {overview.up_count} 家 | 下跌: {overview.down_count} 家 | 平盘: {overview.flat_count} 家
-- 涨停: {overview.limit_up_count} 家 | 跌停: {overview.limit_down_count} 家
-- 两市成交额: {overview.total_amount:.0f} 亿元
+- 上涨: {overview.up_count if overview.up_count is not None else "暂无数据"} 家 | 下跌: {overview.down_count if overview.down_count is not None else "暂无数据"} 家 | 平盘: {overview.flat_count if overview.flat_count is not None else "暂无数据"} 家
+- 涨停: {overview.limit_up_count if overview.limit_up_count is not None else "暂无数据"} 家 | 跌停: {overview.limit_down_count if overview.limit_down_count is not None else "暂无数据"} 家
+- 两市成交额: {total_amount_text}
 
 ## 板块表现
+数据来源: {sector_source_text if top_sectors_text or bottom_sectors_text else "暂无数据"}
 领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
 领跌: {bottom_sectors_text if bottom_sectors_text else "暂无数据"}
 
 ## 市场新闻
 {news_text if news_text else "暂无相关新闻"}
 
-{"注意：由于行情数据获取失败，请主要根据【市场新闻】进行定性分析和总结，不要编造具体的指数点位。" if not indices_text else ""}
+{"注意：主要指数行情未获取。必须明确说明指数数据缺失；不得根据新闻推断当日市场涨跌方向、市场情绪或资金动向。" if not indices_text else ""}
 
 ---
 
@@ -380,19 +485,19 @@ class MarketAnalyzer:
 ## 📊 {overview.date} 大盘复盘
 
 ### 一、市场总结
-（2-3句话概括今日市场整体表现，包括指数涨跌、成交量变化）
+（仅概括已获取的指数和市场统计；缺失的数据明确标注未获取，不推测市场方向）
 
 ### 二、指数点评
-（分析上证、深证、创业板等各指数走势特点）
+（仅点评实际提供的指数数据；没有指数数据时明确说明未获取）
 
-### 三、资金动向
-（解读成交额流向的含义）
+### 三、成交情况
+（仅在成交额有效时描述成交规模；没有资金流向数据时不得推断资金流入或流出）
 
 ### 四、热点解读
-（分析领涨领跌板块背后的逻辑和驱动因素）
+（仅在板块排行有效时分析板块；没有板块数据时明确说明未获取）
 
-### 五、后市展望
-（结合当前走势和新闻，给出明日市场预判）
+### 五、后市观察
+（结合有效行情和新闻列出观察事项；关键行情缺失时不作方向性预测）
 
 ### 六、风险提示
 （需要关注的风险点）
@@ -407,7 +512,11 @@ class MarketAnalyzer:
         """使用模板生成复盘报告（无大模型时的备选方案）"""
         
         # 判断市场走势
-        sh_index = next((idx for idx in overview.indices if idx.code == '000001'), None)
+        sh_index = next(
+            (idx for idx in overview.indices
+             if idx.code in ('000001', 'sh000001', '000001.SH') or idx.name == '上证指数'),
+            None
+        )
         if sh_index:
             if sh_index.change_pct > 1:
                 market_mood = "强势上涨"
@@ -418,36 +527,57 @@ class MarketAnalyzer:
             else:
                 market_mood = "明显下跌"
         else:
-            market_mood = "震荡整理"
+            market_mood = "行情数据缺失，暂无法判断"
         
         # 指数行情（简洁格式）
         indices_text = ""
-        for idx in overview.indices[:4]:
+        for idx in overview.indices:
             direction = "↑" if idx.change_pct > 0 else "↓" if idx.change_pct < 0 else "-"
             indices_text += f"- **{idx.name}**: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
         
         # 板块信息
-        top_text = "、".join([s['name'] for s in overview.top_sectors[:3]])
-        bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]])
-        
+        def format_sector(sector):
+            text = sector["name"]
+
+            count = sector.get("constituent_count")
+            if sector.get("small_sample") and count is not None:
+                text += f"（仅{count}只成分股，小样本，参考意义有限）"
+
+            return text
+
+        top_text = "、".join(
+            format_sector(s) for s in overview.top_sectors[:3]
+        ) or "暂无数据"
+
+        bottom_text = "、".join(
+            format_sector(s) for s in overview.bottom_sectors[:3]
+        ) or "暂无数据"
+        sector_source_text = overview.sector_source or "未知"
+
+        total_amount_text = (
+            f"{overview.total_amount:.0f}亿"
+            if overview.total_amount is not None else "暂无数据"
+        )
+
         report = f"""## 📊 {overview.date} 大盘复盘
 
 ### 一、市场总结
-今日A股市场整体呈现**{market_mood}**态势。
+今日A股市场：**{market_mood}**。
 
 ### 二、主要指数
-{indices_text}
+{indices_text if indices_text else "指数行情未获取，暂无法进行指数点评。"}
 
 ### 三、涨跌统计
 | 指标 | 数值 |
 |------|------|
-| 上涨家数 | {overview.up_count} |
-| 下跌家数 | {overview.down_count} |
-| 涨停 | {overview.limit_up_count} |
-| 跌停 | {overview.limit_down_count} |
-| 两市成交额 | {overview.total_amount:.0f}亿 |
+| 上涨家数 | {overview.up_count if overview.up_count is not None else "暂无数据"} |
+| 下跌家数 | {overview.down_count if overview.down_count is not None else "暂无数据"} |
+| 涨停 | {overview.limit_up_count if overview.limit_up_count is not None else "暂无数据"} |
+| 跌停 | {overview.limit_down_count if overview.limit_down_count is not None else "暂无数据"} |
+| 两市成交额 | {total_amount_text} |
 
 ### 四、板块表现
+- **数据来源**: {sector_source_text if top_text != "暂无数据" or bottom_text != "暂无数据" else "暂无数据"}
 - **领涨**: {top_text}
 - **领跌**: {bottom_text}
 
@@ -455,7 +585,8 @@ class MarketAnalyzer:
 市场有风险，投资需谨慎。以上数据仅供参考，不构成投资建议。
 
 ---
-*复盘时间: {datetime.now().strftime('%H:%M')}*
+*行情采集时间: {overview.capture_time or "未知"}*
+*报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
 """
         return report
     
