@@ -1736,6 +1736,8 @@ class AkshareFetcher(BaseFetcher):
             ]
 
         for source_name, fetch_method in sources:
+            if source_name == "东方财富-Push2" and self._eastmoney_is_in_cooldown():
+                continue
             try:
                 result = fetch_method(n)
                 if (
@@ -1751,6 +1753,8 @@ class AkshareFetcher(BaseFetcher):
                     return result
                 logger.warning("[板块排行] %s 未返回有效排行，尝试下一个来源", source_name)
             except Exception as e:
+                if source_name == "AkShare-东方财富":
+                    self._mark_eastmoney_cooldown(e)
                 logger.warning("[板块排行] %s 获取失败，尝试下一个来源：%s", source_name, e)
 
         logger.error("[板块排行] 所有免费数据源均不可用")
