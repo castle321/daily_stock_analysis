@@ -889,3 +889,29 @@ class DataFetcherManager:
                 logger.warning(f"[{fetcher.name}] 获取板块排行失败: {e}")
                 continue
         return [], []
+
+    def get_sector_constituent_count(self, sector_name: str) -> Optional[int]:
+        """通过实际提供板块排行的 AkShareFetcher 查询成分股数量。"""
+        source = self.last_sector_source or ""
+
+        if source not in ("AkShare-东方财富", "东方财富-Push2"):
+            return None
+
+        for fetcher in self._fetchers:
+            fetcher_source = getattr(fetcher, "last_sector_source", None)
+
+            if fetcher_source != source:
+                continue
+
+            method = getattr(fetcher, "get_sector_constituent_count", None)
+            if not callable(method):
+                return None
+
+            try:
+                return method(sector_name)
+            except Exception as e:
+                logger.warning("[板块成分] %s 查询失败：%s", sector_name, e)
+                return None
+
+        logger.warning("[板块成分] 未找到排行来源对应的数据源：%s", source)
+        return None

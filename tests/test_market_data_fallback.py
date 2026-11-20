@@ -94,6 +94,240 @@ class MarketDataFallbackTests(unittest.TestCase):
         self.assertIn("不得根据新闻推断当日市场涨跌方向", prompt)
         self.assertIn("后市观察", prompt)
 
+
+    def test_manager_routes_constituent_count_to_ranking_fetcher(self):
+        calls = []
+
+        fetcher = SimpleNamespace(
+            name="AkShare",
+            priority=1,
+            last_sector_source="AkShare-东方财富",
+            get_sector_rankings=lambda n: (
+                [{"name": "行业A", "change_pct": 3.0}],
+                [{"name": "行业B", "change_pct": -2.0}],
+            ),
+            get_sector_constituent_count=lambda name: (
+                calls.append(name) or 2
+            ),
+        )
+
+        manager = DataFetcherManager.__new__(DataFetcherManager)
+        manager._fetchers = [fetcher]
+        manager.last_sector_source = None
+
+        manager.get_sector_rankings(5)
+        count = manager.get_sector_constituent_count("行业A")
+
+        self.assertEqual(count, 2)
+        self.assertEqual(calls, ["行业A"])
+
+    def test_manager_skips_constituent_count_for_ths_source(self):
+        calls = []
+
+        fetcher = SimpleNamespace(
+            name="AkShare",
+            priority=1,
+            last_sector_source="AkShare-同花顺",
+            get_sector_rankings=lambda n: (
+                [{"name": "行业A", "change_pct": 3.0}],
+                [],
+            ),
+            get_sector_constituent_count=lambda name: (
+                calls.append(name) or 2
+            ),
+        )
+
+        manager = DataFetcherManager.__new__(DataFetcherManager)
+        manager._fetchers = [fetcher]
+        manager.last_sector_source = None
+
+        manager.get_sector_rankings(5)
+        count = manager.get_sector_constituent_count("行业A")
+
+        self.assertIsNone(count)
+        self.assertEqual(calls, [])
+
+    def test_analyzer_queries_only_top_three_and_bottom_three_unique_sectors(self):
+        calls = []
+
+        top = [
+            {"name": "领涨A", "change_pct": 5.0},
+            {"name": "领涨B", "change_pct": 4.0},
+            {"name": "领涨C", "change_pct": 3.0},
+            {"name": "领涨D", "change_pct": 2.0},
+        ]
+
+        bottom = [
+            {"name": "领跌A", "change_pct": -5.0},
+            {"name": "领跌B", "change_pct": -4.0},
+            {"name": "领涨B", "change_pct": -3.0},
+            {"name": "领跌D", "change_pct": -2.0},
+        ]
+
+        manager = SimpleNamespace(
+            last_sector_source="AkShare-东方财富",
+            get_sector_rankings=lambda n: (top, bottom),
+            get_sector_constituent_count=lambda name: (
+                calls.append(name) or 2
+            ),
+        )
+
+        analyzer = MarketAnalyzer.__new__(MarketAnalyzer)
+        analyzer.data_manager = manager
+
+        overview = MarketOverview(date="2026-11-20")
+        analyzer._get_sector_rankings(overview)
+
+        self.assertEqual(
+            calls,
+            ["领涨A", "领涨B", "领涨C", "领跌A", "领跌B"],
+        )
+        self.assertEqual(len(calls), 5)
+        self.assertTrue(
+            all(
+                sector.get("small_sample") is True
+                for sector in overview.top_sectors[:3]
+                + overview.bottom_sectors[:3]
+            )
+        )
+        self.assertNotIn("constituent_count", overview.top_sectors[3])
+        self.assertNotIn("constituent_count", overview.bottom_sectors[3])
+
+
+    def test_sector_constituent_count_returns_unique_stock_count(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._enforce_rate_limit = lambda: None
+
+        source = pd.DataFrame({
+            "代码": ["301313", "603466", "301313"],
+            "名称": ["凡拓数创", "风语筑", "凡拓数创"],
+        })
+
+        with patch(
+            "akshare.stock_board_industry_cons_em",
+            return_value=source,
+        ):
+            count = fetcher.get_sector_constituent_count("其他数字媒体")
+
+        self.assertEqual(count, 2)
+
+        
+    def test_sector_constituent_count_uses_cache(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._enforce_rate_limit = lambda: None
+
+        source = pd.DataFrame({
+            "代码": ["301313", "603466"],
+            "名称": ["凡拓数创", "风语筑"],
+        })
+
+        with patch(
+            "akshare.stock_board_industry_cons_em",
+            return_value=source,
+        ) as mocked_api:
+            first_count = fetcher.get_sector_constituent_count(
+                "缓存测试行业"
+            )
+            second_count = fetcher.get_sector_constituent_count(
+                "缓存测试行业"
+            )
+
+        self.assertEqual(first_count, 2)
+        self.assertEqual(second_count, 2)
+        self.assertEqual(mocked_api.call_count, 1)
+
+    def test_sector_constituent_count_does_not_cache_failures(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._enforce_rate_limit = lambda: None
+
+        with patch(
+            "akshare.stock_board_industry_cons_em",
+            side_effect=[
+                RuntimeError("接口超时"),
+                pd.DataFrame({
+                    "代码": ["301313"],
+                    "名称": ["凡拓数创"],
+                }),
+            ],
+        ) as mocked_api:
+            first_count = fetcher.get_sector_constituent_count(
+                "失败重试测试行业"
+            )
+            second_count = fetcher.get_sector_constituent_count(
+                "失败重试测试行业"
+            )
+
+        self.assertIsNone(first_count)
+        self.assertEqual(second_count, 1)
+        self.assertEqual(mocked_api.call_count, 2)
+
+
+    def test_sector_constituent_count_returns_none_on_empty_data(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._enforce_rate_limit = lambda: None
+
+        with patch(
+            "akshare.stock_board_industry_cons_em",
+            return_value=pd.DataFrame(),
+        ):
+            count = fetcher.get_sector_constituent_count("空板块")
+
+        self.assertIsNone(count)
+
+    def test_sector_constituent_count_returns_none_on_api_error(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        fetcher._enforce_rate_limit = lambda: None
+
+        with patch(
+            "akshare.stock_board_industry_cons_em",
+            side_effect=RuntimeError("接口超时"),
+        ):
+            count = fetcher.get_sector_constituent_count("行业A")
+
+        self.assertIsNone(count)
+
+    def test_small_sample_sector_is_marked_in_template(self):
+        analyzer = MarketAnalyzer.__new__(MarketAnalyzer)
+
+        overview = MarketOverview(
+            date="2026-11-20",
+            top_sectors=[
+                {
+                    "name": "其他数字媒体",
+                    "change_pct": 15.0,
+                    "constituent_count": 2,
+                    "small_sample": True,
+                },
+            ],
+        )
+
+        report = analyzer._generate_template_review(overview, [])
+
+        self.assertIn("仅2只成分股", report)
+        self.assertIn("小样本", report)
+        self.assertIn("参考意义有限", report)
+
+    def test_ai_prompt_mentions_small_sample_sector(self):
+        analyzer = MarketAnalyzer.__new__(MarketAnalyzer)
+
+        overview = MarketOverview(
+            date="2026-11-20",
+            top_sectors=[
+                {
+                    "name": "其他数字媒体",
+                    "change_pct": 15.0,
+                    "constituent_count": 2,
+                    "small_sample": True,
+                },
+            ],
+        )
+
+        prompt = analyzer._build_review_prompt(overview, [])
+
+        self.assertIn("其他数字媒体(+15.00%)", prompt)
+        self.assertIn("仅2只成分股", prompt)
+        self.assertIn("代表性有限", prompt)
+
     def test_sector_ranking_normalization_filters_invalid_rows_and_sorts(self):
         source = pd.DataFrame([
             {"板块名称": "行业A", "涨跌幅": 2.5},
