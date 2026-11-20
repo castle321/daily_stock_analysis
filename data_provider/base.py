@@ -291,7 +291,8 @@ class DataFetcherManager:
             fetchers: 数据源列表（可选，默认按优先级自动创建）
         """
         self._fetchers: List[BaseFetcher] = []
-        
+        self.last_sector_source: Optional[str] = None
+
         if fetchers:
             # 按优先级排序
             self._fetchers = sorted(fetchers, key=lambda f: f.priority)
@@ -867,6 +868,7 @@ class DataFetcherManager:
 
     def get_sector_rankings(self, n: int = 5) -> Tuple[List[Dict], List[Dict]]:
         """获取板块涨跌榜；空榜不视为成功，继续尝试备用数据源。"""
+        self.last_sector_source = None
         for fetcher in self._fetchers:
             try:
                 data = fetcher.get_sector_rankings(n)
@@ -874,7 +876,14 @@ class DataFetcherManager:
                     isinstance(data, tuple) and len(data) == 2
                     and (bool(data[0]) or bool(data[1]))
                 ):
-                    logger.info(f"[{fetcher.name}] 获取板块排行成功")
+                    # AkShareFetcher 可进一步标记实际使用的子数据源（EM / Push2 / THS）。
+                    self.last_sector_source = (
+                        getattr(fetcher, "last_sector_source", None) or fetcher.name
+                    )
+                    logger.info(
+                        f"[{fetcher.name}] 获取板块排行成功，实际来源: "
+                        f"{self.last_sector_source}"
+                    )
                     return data
             except Exception as e:
                 logger.warning(f"[{fetcher.name}] 获取板块排行失败: {e}")
