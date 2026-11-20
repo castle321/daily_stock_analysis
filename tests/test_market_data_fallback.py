@@ -471,6 +471,31 @@ class MarketDataFallbackTests(unittest.TestCase):
         self.assertEqual(fetcher.last_sector_source, "AkShare-同花顺")
         self.assertEqual(calls, ["ths"])
 
+    def test_em_rate_limit_skips_push2_and_falls_back_to_ths(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        expected = ([{"name": "行业A", "change_pct": 2.0}], [])
+        calls = []
+
+        def fail_em(n):
+            calls.append("em")
+            raise RuntimeError("当前 IP 被临时限流")
+
+        def fail_push2(n):
+            calls.append("push2")
+            self.fail("Push2 must be skipped after an Eastmoney rate limit")
+
+        def use_ths(n):
+            calls.append("ths")
+            return expected
+
+        fetcher._get_sector_rankings_from_em = fail_em
+        fetcher._get_sector_rankings_from_push2 = fail_push2
+        fetcher._get_sector_rankings_from_ths = use_ths
+
+        self.assertEqual(fetcher.get_sector_rankings(5), expected)
+        self.assertEqual(fetcher.last_sector_source, "AkShare-同花顺")
+        self.assertEqual(calls, ["em", "ths"])
+
     def test_sector_rankings_returns_none_when_all_free_sources_fail(self):
         fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
         fetcher._get_sector_rankings_from_em = lambda n: None
