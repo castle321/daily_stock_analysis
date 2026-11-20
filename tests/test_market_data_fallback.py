@@ -446,6 +446,31 @@ class MarketDataFallbackTests(unittest.TestCase):
         )
         self.assertEqual(mocked_get.call_count, 2)
 
+    def test_eastmoney_cooldown_skips_em_and_push2_and_uses_ths(self):
+        fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
+        expected = (
+            [{"name": "行业A", "change_pct": 3.0}],
+            [{"name": "行业B", "change_pct": -2.0}],
+        )
+        calls = []
+
+        fetcher._mark_eastmoney_cooldown(
+            RuntimeError("东方财富 Push2 短时间内请求过多，当前 IP 被临时限流")
+        )
+        fetcher._get_sector_rankings_from_em = lambda n: (
+            calls.append("em") or self.fail("cooldown should skip EM")
+        )
+        fetcher._get_sector_rankings_from_push2 = lambda n: (
+            calls.append("push2") or self.fail("cooldown should skip Push2")
+        )
+        fetcher._get_sector_rankings_from_ths = lambda n: (
+            calls.append("ths") or expected
+        )
+
+        self.assertEqual(fetcher.get_sector_rankings(5), expected)
+        self.assertEqual(fetcher.last_sector_source, "AkShare-同花顺")
+        self.assertEqual(calls, ["ths"])
+
     def test_sector_rankings_returns_none_when_all_free_sources_fail(self):
         fetcher = AkshareFetcher(sleep_min=0, sleep_max=0)
         fetcher._get_sector_rankings_from_em = lambda n: None
