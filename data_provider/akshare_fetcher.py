@@ -1578,6 +1578,7 @@ class AkshareFetcher(BaseFetcher):
 
         所有来源均失败或数据无效时返回 None，不生成虚假排行。
         """
+        self.last_sector_source = None
         sources = [
             ("AkShare-东方财富", self._get_sector_rankings_from_em),
             ("东方财富-Push2", self._get_sector_rankings_from_push2),
@@ -1592,6 +1593,7 @@ class AkshareFetcher(BaseFetcher):
                     and len(result) == 2
                     and (bool(result[0]) or bool(result[1]))
                 ):
+                    self.last_sector_source = source_name
                     logger.info(
                         "[板块排行] %s 获取成功：领涨 %d 个，领跌 %d 个",
                         source_name, len(result[0]), len(result[1])
