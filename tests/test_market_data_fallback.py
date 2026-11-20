@@ -72,6 +72,18 @@ class MarketDataFallbackTests(unittest.TestCase):
         self.assertIn("**领涨**: 暂无数据", report)
         self.assertNotIn("震荡整理", report)
 
+    def test_template_reports_sector_ranking_source(self):
+        analyzer = MarketAnalyzer.__new__(MarketAnalyzer)
+        overview = MarketOverview(
+            date="2026-11-20",
+            top_sectors=[{"name": "行业A", "change_pct": 2.5}],
+            sector_source="东方财富-Push2",
+        )
+
+        report = analyzer._generate_template_review(overview, [])
+
+        self.assertIn("**数据来源**: 东方财富-Push2", report)
+
     def test_ai_prompt_forbids_fund_flow_inference_without_data(self):
         analyzer = MarketAnalyzer.__new__(MarketAnalyzer)
         overview = MarketOverview(date="2026-11-19")
@@ -110,6 +122,7 @@ class MarketDataFallbackTests(unittest.TestCase):
 
         def push2(n):
             calls.append("push2")
+            fetcher.last_sector_source = "东方财富-Push2"
             return expected
 
         def ths(n):
@@ -121,6 +134,7 @@ class MarketDataFallbackTests(unittest.TestCase):
         fetcher._get_sector_rankings_from_ths = ths
 
         self.assertEqual(fetcher.get_sector_rankings(5), expected)
+        self.assertEqual(fetcher.last_sector_source, "东方财富-Push2")
         self.assertEqual(calls, ["em", "push2"])
 
     def test_push2_keeps_top_rankings_when_bottom_request_fails(self):
