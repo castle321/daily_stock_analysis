@@ -13,30 +13,37 @@ from src.market_session import get_a_share_market_context
 
 class AShareMarketSessionTests(unittest.TestCase):
     def test_morning_session_is_marked_as_intraday(self):
-        context = get_a_share_market_context(datetime(2026, 11, 23, 10, 26))
+        context = get_a_share_market_context(datetime(2026, 11, 23, 10, 26), data_date="2026-11-23")
         self.assertEqual(context["phase"], "morning_session")
         self.assertTrue(context["trading_day_in_progress"])
 
     def test_lunch_break_is_still_marked_as_intraday_day(self):
-        context = get_a_share_market_context(datetime(2026, 11, 23, 12, 0))
+        context = get_a_share_market_context(datetime(2026, 11, 23, 12, 0), data_date="2026-11-23")
         self.assertEqual(context["phase"], "lunch_break")
         self.assertTrue(context["trading_day_in_progress"])
 
     def test_afternoon_session_is_marked_as_intraday(self):
-        context = get_a_share_market_context(datetime(2026, 11, 23, 14, 0))
+        context = get_a_share_market_context(datetime(2026, 11, 23, 14, 0), data_date="2026-11-23")
         self.assertEqual(context["phase"], "afternoon_session")
         self.assertTrue(context["trading_day_in_progress"])
 
     def test_pre_open_and_after_close_are_not_intraday(self):
-        before = get_a_share_market_context(datetime(2026, 11, 23, 9, 0))
-        after = get_a_share_market_context(datetime(2026, 11, 23, 15, 1))
+        before = get_a_share_market_context(datetime(2026, 11, 23, 9, 0), data_date="2026-11-23")
+        after = get_a_share_market_context(datetime(2026, 11, 23, 15, 1), data_date="2026-11-23")
         self.assertFalse(before["trading_day_in_progress"])
         self.assertFalse(after["trading_day_in_progress"])
         self.assertEqual(before["phase"], "pre_open")
         self.assertEqual(after["phase"], "post_close")
 
+    def test_weekday_hours_without_matching_daily_bar_are_unverified(self):
+        context = get_a_share_market_context(
+            datetime(2026, 11, 23, 10, 0), data_date="2026-11-20"
+        )
+        self.assertEqual(context["phase"], "session_unverified")
+        self.assertIsNone(context["trading_day_in_progress"])
+
     def test_weekend_is_not_marked_as_trading_day(self):
-        context = get_a_share_market_context(datetime(2026, 11, 22, 10, 0))
+        context = get_a_share_market_context(datetime(2026, 11, 22, 10, 0), data_date="2026-11-20")
         self.assertEqual(context["phase"], "weekend")
         self.assertFalse(context["trading_day_in_progress"])
 
