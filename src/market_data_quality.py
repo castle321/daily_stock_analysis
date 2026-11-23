@@ -57,7 +57,6 @@ def assess_market_data_quality(
 
     if (
         same_day_bar
-        and market_context.get("trading_day_in_progress") is True
         and daily_change is not None
         and realtime_change is not None
         and abs(daily_change - realtime_change) > change_pct_tolerance
