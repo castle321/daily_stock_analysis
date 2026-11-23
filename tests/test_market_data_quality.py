@@ -134,7 +134,7 @@ class MarketDataQualityTests(unittest.TestCase):
                 "core_conclusion": {},
                 "data_perspective": {
                     "trend_status": {},
-                    "price_position": {"current_price": 1485.75},
+                    "price_position": {"current_price": 1485.75, "ma5": 1460.04},
                     "volume_analysis": {},
                 },
                 "battle_plan": {
