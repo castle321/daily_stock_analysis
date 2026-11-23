@@ -167,6 +167,14 @@ class MarketDataQualityTests(unittest.TestCase):
             "0成（数据核验前暂停新交易）",
         )
         self.assertIn("暂停提供", guarded.dashboard["battle_plan"]["sniper_points"]["ideal_buy"])
+        price_data = guarded.dashboard["data_perspective"]["price_position"]
+        self.assertEqual(price_data["current_price"], 1444.84)
+        self.assertEqual(price_data["bias_ma5"], "N/A")
+        self.assertIn("截至2026-11-20", price_data["ma5"])
+        self.assertEqual(
+            guarded.dashboard["intelligence"]["positive_catalysts"],
+            ["行情数据质量校验未通过，暂停输出技术面利好判断"],
+        )
 
     def test_prompt_marks_stale_daily_bar_as_historical_and_blocks_trades(self):
         analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
