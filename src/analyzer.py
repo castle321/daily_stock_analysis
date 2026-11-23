@@ -961,7 +961,15 @@ class GeminiAnalyzer:
         result.pattern_analysis = "最新可用日K并非当前交易日数据，暂停判断当前K线形态。"
 
         dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
-        core = dashboard.setdefault("core_conclusion", {})
+
+        def ensure_dict(parent: Dict[str, Any], key: str) -> Dict[str, Any]:
+            value = parent.get(key)
+            if not isinstance(value, dict):
+                value = {}
+                parent[key] = value
+            return value
+
+        core = ensure_dict(dashboard, "core_conclusion")
         core["one_sentence"] = "行情数据日期未同步，暂不生成交易决策"
         core["signal_type"] = "⚠️数据待核验/观望"
         core["time_sensitivity"] = "等待数据核验"
@@ -970,13 +978,13 @@ class GeminiAnalyzer:
             "has_position": "暂不依据本报告调整仓位；请以已核验的实时行情和个人风控规则为准。",
         }
 
-        data_perspective = dashboard.setdefault("data_perspective", {})
-        trend_status = data_perspective.setdefault("trend_status", {})
+        data_perspective = ensure_dict(dashboard, "data_perspective")
+        trend_status = ensure_dict(data_perspective, "trend_status")
         trend_status["ma_alignment"] = "历史均线数据，日期未覆盖当前交易日"
         trend_status["is_bullish"] = False
         trend_status["trend_score"] = 0
 
-        price_position = data_perspective.setdefault("price_position", {})
+        price_position = ensure_dict(data_perspective, "price_position")
         realtime = context.get("realtime") or {}
         daily_date = quality.get("daily_bar_date") or market_context.get("data_date") or "未知"
         if realtime.get("price") is not None:
@@ -989,32 +997,35 @@ class GeminiAnalyzer:
         price_position["support_level"] = "暂停提供"
         price_position["resistance_level"] = "暂停提供"
 
-        volume = data_perspective.setdefault("volume_analysis", {})
+        volume = ensure_dict(data_perspective, "volume_analysis")
         volume["volume_status"] = "不可判断"
         volume["volume_meaning"] = "当日日K未同步，不能判断当前交易日放量或缩量"
 
-        chip = data_perspective.setdefault("chip_structure", {})
+        chip = ensure_dict(data_perspective, "chip_structure")
         chip["profit_ratio"] = "数据未核验"
         chip["avg_cost"] = "数据未核验"
         chip["concentration"] = "数据未核验"
         chip["chip_health"] = "数据未核验"
 
-        intelligence = dashboard.setdefault("intelligence", {})
+        intelligence = ensure_dict(dashboard, "intelligence")
         intelligence["sentiment_summary"] = "行情日期未同步，暂不判断当前技术面和资金情绪"
         intelligence["positive_catalysts"] = ["行情数据质量校验未通过，暂停输出技术面利好判断"]
-        risk_alerts = intelligence.setdefault("risk_alerts", [])
+        risk_alerts = intelligence.get("risk_alerts")
+        if not isinstance(risk_alerts, list):
+            risk_alerts = []
+            intelligence["risk_alerts"] = risk_alerts
         if warning not in risk_alerts:
             risk_alerts.insert(0, warning)
         result.market_sentiment = "行情数据日期未同步，暂不判断当前市场情绪"
 
-        battle_plan = dashboard.setdefault("battle_plan", {})
+        battle_plan = ensure_dict(dashboard, "battle_plan")
         battle_plan["sniper_points"] = {
             "ideal_buy": "暂停提供：行情数据日期未同步",
             "secondary_buy": "暂停提供：行情数据日期未同步",
             "stop_loss": "暂停提供：请勿使用未核验数据设置交易点位",
             "take_profit": "暂停提供：请勿使用未核验数据设置交易点位",
         }
-        strategy = battle_plan.setdefault("position_strategy", {})
+        strategy = ensure_dict(battle_plan, "position_strategy")
         strategy["suggested_position"] = "0成（数据核验前暂停新交易）"
         strategy["entry_plan"] = "暂停建仓和加仓建议，待当日日K与实时行情核验后重新分析。"
         strategy["risk_control"] = "不要依据本报告中的历史均线或过期日K制定当前交易计划。"
