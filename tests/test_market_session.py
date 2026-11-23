@@ -61,7 +61,7 @@ class AShareMarketSessionTests(unittest.TestCase):
             return_value=datetime(2026, 11, 23, 10, 26),
         ):
             enhanced = pipeline._enhance_context(
-                context={"code": "600519", "today": {}},
+                context={"code": "600519", "date": "2026-11-23", "today": {}},
                 realtime_quote=quote,
                 chip_data=None,
                 trend_result=None,
