@@ -5,6 +5,10 @@ import unittest
 
 from src.analyzer import AnalysisResult, GeminiAnalyzer
 from src.market_data_quality import assess_market_data_quality
+from src.core.pipeline import StockAnalysisPipeline
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 class MarketDataQualityTests(unittest.TestCase):
@@ -66,6 +70,56 @@ class MarketDataQualityTests(unittest.TestCase):
 
         self.assertFalse(quality["blocks_actionable_decision"])
         self.assertEqual(quality["status"], "ok")
+
+    def test_pipeline_attaches_quality_and_suppresses_stale_trend_signal(self):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        quote = SimpleNamespace(
+            name="贵州茅台",
+            price=1444.84,
+            change_pct=-2.75,
+            volume_ratio=1.74,
+            turnover_rate=0.3,
+            source="tencent",
+        )
+        trend = SimpleNamespace(
+            trend_status=SimpleNamespace(value="多头排列"),
+            ma_alignment="MA5>MA10>MA20",
+            trend_strength=75,
+            bias_ma5=1.76,
+            bias_ma10=2.9,
+            volume_status=SimpleNamespace(value="放量上涨"),
+            volume_trend="放量",
+            buy_signal=SimpleNamespace(value="买入"),
+            signal_score=70,
+            signal_reasons=["历史均线多头"],
+            risk_factors=[],
+        )
+        context = {
+            "code": "600519",
+            "date": "2026-11-20",
+            "today": {"date": "2026-11-20", "pct_chg": 1.75},
+            "yesterday": {"date": "2026-11-19"},
+            "volume_change_ratio": 1.57,
+            "price_change_ratio": 1.75,
+        }
+
+        with patch(
+            "src.market_session.now_china",
+            return_value=datetime(2026, 11, 23, 12, 37),
+        ):
+            enhanced = pipeline._enhance_context(
+                context=context,
+                realtime_quote=quote,
+                chip_data=None,
+                trend_result=trend,
+                stock_name="贵州茅台",
+            )
+
+        self.assertTrue(enhanced["market_data_quality"]["blocks_actionable_decision"])
+        self.assertNotIn("trend_analysis", enhanced)
+        self.assertNotIn("volume_change_ratio", enhanced)
+        self.assertNotIn("price_change_ratio", enhanced)
+        self.assertEqual(enhanced["realtime"]["change_pct"], -2.75)
 
     def test_ai_buy_result_is_overridden_when_data_quality_blocks(self):
         result = AnalysisResult(
@@ -142,6 +196,8 @@ class MarketDataQualityTests(unittest.TestCase):
         self.assertIn("实时行情涨跌幅 | -2.75%", prompt)
         self.assertIn("禁止输出买入、加仓、减仓或卖出结论", prompt)
         self.assertIn("不得生成具体建仓价", prompt)
+        self.assertIn("历史日K均线系统（截至2026-11-20）", prompt)
+        self.assertIn("历史日K量价变化", prompt)
 
 
 if __name__ == "__main__":
