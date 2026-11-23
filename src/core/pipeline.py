@@ -27,6 +27,7 @@ from src.search_service import SearchService
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from bot.models import BotMessage
+from src.market_session import get_a_share_market_context
 
 
 logger = logging.getLogger(__name__)
@@ -342,6 +343,9 @@ class StockAnalysisPipeline:
         elif realtime_quote and getattr(realtime_quote, 'name', None):
             enhanced['stock_name'] = realtime_quote.name
         
+        # 记录行情分析时点，明确区分盘中日K暂值与最终收盘数据。
+        enhanced['market_context'] = get_a_share_market_context()
+
         # 添加实时行情（兼容不同数据源的字段差异）
         if realtime_quote:
             # 使用 getattr 安全获取字段，缺失字段返回 None 或默认值
