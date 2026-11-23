@@ -952,19 +952,39 @@ class GeminiAnalyzer:
             daily_amount_label = "盘中累计成交额"
             realtime_price_label = "盘中最新价（行情接口快照）"
             intraday_warning = (
-                "当前处于A股交易日的盘中时段。今日日K的价格、涨跌幅、成交量和成交额"
-                "均可能尚未定稿；严禁称为今日收盘价、最终收盘涨跌幅或全天成交量/成交额。"
+                "已核验当日日K日期与分析日期一致，当前处于A股交易日盘中时段。"
+                "今日日K的价格、涨跌幅、成交量和成交额均可能尚未定稿；"
+                "严禁称为今日收盘价、最终收盘涨跌幅或全天成交量/成交额。"
                 "请使用“盘中最新价”“盘中涨跌幅”“盘中累计成交量/成交额”等表述。"
             )
-        else:
+        elif market_context and market_context.get('trading_day_in_progress') is None:
+            daily_close_label = "日K价格字段（日期未核验，可能为盘中暂值）"
+            daily_volume_label = "日K成交量字段（统计周期未核验）"
+            daily_amount_label = "日K成交额字段（统计周期未核验）"
+            realtime_price_label = "行情接口返回价（交易时段快照，状态未核验）"
+            intraday_warning = (
+                "当前处于工作日常规交易时间范围，但当日日K日期未能核验。"
+                "行情可能仍处于盘中，禁止将 close 字段称为最终收盘价，"
+                "也不得将成交量/成交额称为全天最终数据；应明确标注行情日期和时点。"
+            )
+        elif market_context:
             daily_close_label = "日K收盘价字段（日期以行情数据为准）"
             daily_volume_label = "日K成交量（日期以行情数据为准）"
             daily_amount_label = "日K成交额（日期以行情数据为准）"
             realtime_price_label = "行情接口最新返回价（非交易时段快照）"
             intraday_warning = (
-                "当前不在A股连续交易时段，行情接口价格属于非交易时段快照。"
+                "当前不在A股常规连续交易时段，行情接口价格属于非交易时段快照。"
                 "只有在行情数据日期明确对应分析日期时，才可称为今日收盘价；"
                 "否则必须称为最新交易日收盘价，不得将旧行情说成今日行情。"
+            )
+        else:
+            daily_close_label = "日K价格字段（行情时点未确认）"
+            daily_volume_label = "日K成交量字段（统计周期未确认）"
+            daily_amount_label = "日K成交额字段（统计周期未确认）"
+            realtime_price_label = "行情接口返回价（时点未确认）"
+            intraday_warning = (
+                "未提供A股交易时段和行情日期上下文。不得判断该价格是盘中价还是收盘价，"
+                "不得将其描述为今日收盘价或全天成交量/成交额。"
             )
 
         # ========== 构建决策仪表盘格式的输入 ==========
@@ -1107,7 +1127,7 @@ class GeminiAnalyzer:
 ## 行情时点强制规则
 - 本次分析时点：北京时间 {market_as_of}；A股时段判断：{market_phase}。
 - {intraday_warning}
-- 当“交易时段进行中”时，禁止出现“今日收盘价”“今日收盘”“全天成交量/成交额已确定”等结论。
+- 当“交易时段进行中”或当日日K日期未核验时，禁止出现“今日收盘价”“今日收盘”“全天成交量/成交额已确定”等结论。
 - 若数据日期无法确认，不得把“最新交易日”描述为“今天”。
 - 盘中日K的 close 字段只是接口当前返回值，不代表最终收盘价。
 """
