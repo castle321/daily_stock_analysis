@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from src.time_utils import CHINA_TIMEZONE, now_china
 
 
-def get_a_share_market_context(now: Optional[datetime] = None) -> Dict[str, Any]:
+def get_a_share_market_context(\n    now: Optional[datetime] = None,\n    data_date: Optional[str] = None,\n) -> Dict[str, Any]:
     """
     返回用于行情分析的A股交易时段上下文。
 
