@@ -344,7 +344,7 @@ class StockAnalysisPipeline:
             enhanced['stock_name'] = realtime_quote.name
         
         # 记录行情分析时点，明确区分盘中日K暂值与最终收盘数据。
-        enhanced['market_context'] = get_a_share_market_context()
+        enhanced['market_context'] = get_a_share_market_context(\n            data_date=context.get('date') if not context.get('data_missing') else None\n        )
 
         # 添加实时行情（兼容不同数据源的字段差异）
         if realtime_quote:
