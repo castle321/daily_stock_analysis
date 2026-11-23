@@ -993,7 +993,7 @@ class GeminiAnalyzer:
 | {daily_amount_label} | {self._format_amount(today.get('amount'))} |
 
 **行情口径约束：** {intraday_warning}
-**交易日历说明：** 当前时段按周一至周五及A股常规交易时间推算，未接入法定节假日/临时休市日历；节假日需以数据源实际交易日期为准。
+**交易日历说明：** {market_context.get('calendar_note', '未提供官方交易日历，需以数据源实际交易日期为准。')}
 
 ### 均线系统（关键判断指标）
 | 均线 | 数值 | 说明 |
