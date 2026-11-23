@@ -1001,7 +1001,7 @@ class GeminiAnalyzer:
 
 ## 📈 技术面数据
 
-### 行情数据（{market_phase}；快照时间：北京时间 {market_as_of}）
+### 行情数据（{market_phase}；分析时点：北京时间 {market_as_of}）
 | 指标 | 数值 |
 |------|------|
 | {daily_close_label} | {today.get('close', 'N/A')} 元 |
