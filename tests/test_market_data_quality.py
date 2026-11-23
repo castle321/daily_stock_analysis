@@ -51,6 +51,22 @@ class MarketDataQualityTests(unittest.TestCase):
         self.assertTrue(quality["blocks_actionable_decision"])
         self.assertIn("明显冲突", quality["reason"])
 
+    def test_same_day_percentage_conflict_is_checked_after_market_close(self):
+        quality = assess_market_data_quality(
+            market_context={
+                "phase": "post_close",
+                "as_of": "2026-11-23 15:30:00",
+                "data_date": "2026-11-23",
+                "daily_bar_matches_today": True,
+                "trading_day_in_progress": False,
+            },
+            daily_data={"date": "2026-11-23", "pct_chg": 1.75},
+            realtime_data={"change_pct": -2.75, "source": "tencent"},
+        )
+
+        self.assertTrue(quality["blocks_actionable_decision"])
+        self.assertIn("明显冲突", quality["reason"])
+
     def test_does_not_compare_absolute_prices_across_adjustment_bases(self):
         quality = assess_market_data_quality(
             market_context={
