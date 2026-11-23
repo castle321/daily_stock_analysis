@@ -1129,13 +1129,13 @@ class GeminiAnalyzer:
 **行情口径约束：** {intraday_warning}
 **交易日历说明：** {market_context.get('calendar_note', '未提供官方交易日历，需以数据源实际交易日期为准。')}
 
-### 均线系统（关键判断指标）
+### {'历史日K均线系统（截至' + str(daily_data_date) + '）' if quality_blocks_decision else '均线系统（关键判断指标）'}
 | 均线 | 数值 | 说明 |
 |------|------|------|
-| MA5 | {today.get('ma5', 'N/A')} | 短期趋势线 |
-| MA10 | {today.get('ma10', 'N/A')} | 中短期趋势线 |
-| MA20 | {today.get('ma20', 'N/A')} | 中期趋势线 |
-| 均线形态 | {context.get('ma_status', '未知')} | 多头/空头/缠绕 |
+| {'历史MA5' if quality_blocks_decision else 'MA5'} | {today.get('ma5', 'N/A')} | 短期趋势线 |
+| {'历史MA10' if quality_blocks_decision else 'MA10'} | {today.get('ma10', 'N/A')} | 中短期趋势线 |
+| {'历史MA20' if quality_blocks_decision else 'MA20'} | {today.get('ma20', 'N/A')} | 中期趋势线 |
+| {'历史均线形态' if quality_blocks_decision else '均线形态'} | {context.get('ma_status', '未知')} | 多头/空头/缠绕 |
 """
         
         # 添加实时行情数据（量比、换手率等）
@@ -1196,8 +1196,13 @@ class GeminiAnalyzer:
 {chr(10).join('- ' + r for r in trend.get('risk_factors', ['无'])) if trend.get('risk_factors') else '- 无'}
 """
         
-        # 添加昨日对比数据
-        if 'yesterday' in context:
+        # 添加昨日对比数据；日K日期未覆盖当前交易日时，只能标注为历史比较。
+        if 'yesterday' in context and quality_blocks_decision:
+            prompt += f"""
+### 历史日K量价变化（截至 {daily_data_date}）
+- 该比较仅反映最近两条可用历史日K，不代表当前交易日量价变化。
+"""
+        elif 'yesterday' in context:
             volume_change = context.get('volume_change_ratio', 'N/A')
             prompt += f"""
 ### 量价变化
