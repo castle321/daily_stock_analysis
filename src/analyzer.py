@@ -942,7 +942,31 @@ class GeminiAnalyzer:
             stock_name = STOCK_NAME_MAP.get(code, f'股票{code}')
             
         today = context.get('today', {})
-        
+        market_context = context.get('market_context') or {}
+        is_intraday = bool(market_context.get('trading_day_in_progress'))
+        market_phase = market_context.get('phase_label', '交易时段未确认')
+        market_as_of = market_context.get('as_of', '未知')
+        if is_intraday:
+            daily_close_label = "日K最新价（盘中暂值，非收盘价）"
+            daily_volume_label = "盘中累计成交量"
+            daily_amount_label = "盘中累计成交额"
+            realtime_price_label = "盘中最新价（行情接口快照）"
+            intraday_warning = (
+                "当前处于A股交易日的盘中时段。今日日K的价格、涨跌幅、成交量和成交额"
+                "均可能尚未定稿；严禁称为今日收盘价、最终收盘涨跌幅或全天成交量/成交额。"
+                "请使用“盘中最新价”“盘中涨跌幅”“盘中累计成交量/成交额”等表述。"
+            )
+        else:
+            daily_close_label = "日K收盘价字段（日期以行情数据为准）"
+            daily_volume_label = "日K成交量（日期以行情数据为准）"
+            daily_amount_label = "日K成交额（日期以行情数据为准）"
+            realtime_price_label = "行情接口最新返回价（非交易时段快照）"
+            intraday_warning = (
+                "当前不在A股连续交易时段，行情接口价格属于非交易时段快照。"
+                "只有在行情数据日期明确对应分析日期时，才可称为今日收盘价；"
+                "否则必须称为最新交易日收盘价，不得将旧行情说成今日行情。"
+            )
+
         # ========== 构建决策仪表盘格式的输入 ==========
         prompt = f"""# 决策仪表盘分析请求
 
@@ -957,16 +981,19 @@ class GeminiAnalyzer:
 
 ## 📈 技术面数据
 
-### 今日行情
+### 行情数据（{market_phase}；快照时间：北京时间 {market_as_of}）
 | 指标 | 数值 |
 |------|------|
-| 收盘价 | {today.get('close', 'N/A')} 元 |
-| 开盘价 | {today.get('open', 'N/A')} 元 |
-| 最高价 | {today.get('high', 'N/A')} 元 |
-| 最低价 | {today.get('low', 'N/A')} 元 |
-| 涨跌幅 | {today.get('pct_chg', 'N/A')}% |
-| 成交量 | {self._format_volume(today.get('volume'))} |
-| 成交额 | {self._format_amount(today.get('amount'))} |
+| {daily_close_label} | {today.get('close', 'N/A')} 元 |
+| 开盘价字段（盘中可能变化） | {today.get('open', 'N/A')} 元 |
+| 最高价字段（盘中可能变化） | {today.get('high', 'N/A')} 元 |
+| 最低价字段（盘中可能变化） | {today.get('low', 'N/A')} 元 |
+| 涨跌幅字段（盘中可能变化） | {today.get('pct_chg', 'N/A')}% |
+| {daily_volume_label} | {self._format_volume(today.get('volume'))} |
+| {daily_amount_label} | {self._format_amount(today.get('amount'))} |
+
+**行情口径约束：** {intraday_warning}
+**交易日历说明：** 当前时段按周一至周五及A股常规交易时间推算，未接入法定节假日/临时休市日历；节假日需以数据源实际交易日期为准。
 
 ### 均线系统（关键判断指标）
 | 均线 | 数值 | 说明 |
@@ -984,7 +1011,7 @@ class GeminiAnalyzer:
 ### 实时行情增强数据
 | 指标 | 数值 | 解读 |
 |------|------|------|
-| 当前价格 | {rt.get('price', 'N/A')} 元 | |
+| {realtime_price_label} | {rt.get('price', 'N/A')} 元 | |
 | **量比** | **{rt.get('volume_ratio', 'N/A')}** | {rt.get('volume_ratio_desc', '')} |
 | **换手率** | **{rt.get('turnover_rate', 'N/A')}%** | |
 | 市盈率(动态) | {rt.get('pe_ratio', 'N/A')} | |
@@ -1074,6 +1101,16 @@ class GeminiAnalyzer:
 在回答技术面问题（如均线、乖离率）时，请直接说明“数据缺失，无法判断”，**严禁编造数据**。
 """
         
+        # 再次强调行情时点，避免模型在生成自然语言结论时混淆盘中价与收盘价。
+        prompt += f"""
+
+## 行情时点强制规则
+- 本次分析时点：北京时间 {market_as_of}；A股时段判断：{market_phase}。
+- {intraday_warning}
+- 当“交易时段进行中”时，禁止出现“今日收盘价”“今日收盘”“全天成交量/成交额已确定”等结论。
+- 若数据日期无法确认，不得把“最新交易日”描述为“今天”。
+- 盘中日K的 close 字段只是接口当前返回值，不代表最终收盘价。
+
         # 明确的输出要求
         prompt += f"""
 ---
