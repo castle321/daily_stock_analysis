@@ -898,6 +898,7 @@ class GeminiAnalyzer:
             result = self._parse_response(response_text, code, name)
             result.raw_response = response_text
             result.search_performed = bool(news_context)
+            self._apply_market_data_safety_guard(result, context)
             
             logger.info(f"[LLM解析] {name}({code}) 分析完成: {result.trend_prediction}, 评分 {result.sentiment_score}")
             
@@ -918,6 +919,96 @@ class GeminiAnalyzer:
                 error_message=str(e),
             )
     
+    @staticmethod
+    def _apply_market_data_safety_guard(
+        result: AnalysisResult,
+        context: Dict[str, Any],
+    ) -> AnalysisResult:
+        """行情日期或同日涨跌幅校验失败时，强制撤销 AI 的买卖建议。"""
+        quality = context.get("market_data_quality") or {}
+        market_context = context.get("market_context") or {}
+        should_block = (
+            quality.get("blocks_actionable_decision")
+            or market_context.get("phase") == "session_unverified"
+        )
+        if not should_block:
+            return result
+
+        reason = quality.get("reason") or (
+            f"最新日K日期 {market_context.get('data_date') or '缺失'} "
+            f"未能与分析日期 {str(market_context.get('as_of') or '')[:10] or '未知'} 对齐"
+        )
+        warning = (
+            f"行情数据质量校验未通过：{reason}。"
+            "当前仅能展示历史日K与独立实时行情，暂停生成买入、加仓、减仓、卖出及具体仓位建议。"
+        )
+
+        result.sentiment_score = min(int(result.sentiment_score or 50), 50)
+        result.trend_prediction = "震荡（行情数据待核验）"
+        result.operation_advice = "观望"
+        result.decision_type = "hold"
+        result.confidence_level = "低"
+        result.analysis_summary = warning
+        result.key_points = "行情日期未同步；历史均线和量能不能代表当前交易日；交易决策暂停"
+        result.risk_warning = warning
+        result.buy_reason = "数据质量校验未通过，当前不提供买入或卖出理由。"
+        result.trend_analysis = "当前日K数据未覆盖分析时点，无法判断当前交易日趋势。"
+        result.short_term_outlook = "暂停提供短线方向判断，待最新日K与实时行情完成核验后再分析。"
+        result.medium_term_outlook = "历史均线可供回顾，但不据此生成当前交易计划。"
+        result.technical_analysis = "当前交易日行情数据未核验，技术指标仅代表最新可用日K日期，暂不形成交易信号。"
+        result.ma_analysis = "均线数据属于最新可用历史日K，不能直接作为当前交易日的买卖依据。"
+        result.volume_analysis = "当前交易日成交量和量价关系未核验，暂停判断放量或缩量。"
+        result.pattern_analysis = "最新可用日K并非当前交易日数据，暂停判断当前K线形态。"
+
+        dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
+        core = dashboard.setdefault("core_conclusion", {})
+        core["one_sentence"] = "行情数据日期未同步，暂不生成交易决策"
+        core["signal_type"] = "⚠️数据待核验/观望"
+        core["time_sensitivity"] = "等待数据核验"
+        core["position_advice"] = {
+            "no_position": "最新日K未覆盖当前交易日，暂不新开仓；待数据核验后重新分析。",
+            "has_position": "暂不依据本报告调整仓位；请以已核验的实时行情和个人风控规则为准。",
+        }
+
+        data_perspective = dashboard.setdefault("data_perspective", {})
+        trend_status = data_perspective.setdefault("trend_status", {})
+        trend_status["ma_alignment"] = "历史均线数据，日期未覆盖当前交易日"
+        trend_status["is_bullish"] = False
+        trend_status["trend_score"] = 0
+
+        price_position = data_perspective.setdefault("price_position", {})
+        realtime = context.get("realtime") or {}
+        if realtime.get("price") is not None:
+            price_position["current_price"] = realtime["price"]
+        price_position["bias_status"] = "不可判断（日K日期未同步）"
+
+        volume = data_perspective.setdefault("volume_analysis", {})
+        volume["volume_status"] = "不可判断"
+        volume["volume_meaning"] = "当日日K未同步，不能判断当前交易日放量或缩量"
+
+        battle_plan = dashboard.setdefault("battle_plan", {})
+        battle_plan["sniper_points"] = {
+            "ideal_buy": "暂停提供：行情数据日期未同步",
+            "secondary_buy": "暂停提供：行情数据日期未同步",
+            "stop_loss": "暂停提供：请勿使用未核验数据设置交易点位",
+            "take_profit": "暂停提供：请勿使用未核验数据设置交易点位",
+        }
+        strategy = battle_plan.setdefault("position_strategy", {})
+        strategy["suggested_position"] = "0成（数据核验前暂停新交易）"
+        strategy["entry_plan"] = "暂停建仓和加仓建议，待当日日K与实时行情核验后重新分析。"
+        strategy["risk_control"] = "不要依据本报告中的历史均线或过期日K制定当前交易计划。"
+        battle_plan["action_checklist"] = [
+            "❌ 行情日期：最新日K未覆盖当前分析日期",
+            "❌ 技术信号：历史均线和量能暂停用于当前交易决策",
+            "⚠️ 实时行情：仅作为独立快照展示，尚未与当日日K完成核验",
+        ]
+        result.dashboard = dashboard
+        result.data_sources = (
+            f"{result.data_sources or '行情接口'}；交易决策已被安全规则拦截：{reason}"
+        )
+        logger.error("[行情安全保护] 已将 AI 决策强制降级为观望：%s", reason)
+        return result
+
     def _format_prompt(
         self, 
         context: Dict[str, Any], 
@@ -943,9 +1034,20 @@ class GeminiAnalyzer:
             
         today = context.get('today', {})
         market_context = context.get('market_context') or {}
+        market_data_quality = context.get('market_data_quality') or {}
+        quality_blocks_decision = (
+            market_data_quality.get('blocks_actionable_decision')
+            or market_context.get('phase') == 'session_unverified'
+        )
         is_intraday = bool(market_context.get('trading_day_in_progress'))
         market_phase = market_context.get('phase_label', '交易时段未确认')
         market_as_of = market_context.get('as_of', '未知')
+        daily_data_date = (
+            market_data_quality.get('daily_bar_date')
+            or market_context.get('data_date')
+            or context.get('date')
+            or '未知'
+        )
         if is_intraday:
             daily_close_label = "日K最新价（盘中暂值，非收盘价）"
             daily_volume_label = "盘中累计成交量"
@@ -958,15 +1060,27 @@ class GeminiAnalyzer:
                 "请使用“盘中最新价”“盘中涨跌幅”“盘中累计成交量/成交额”等表述。"
             )
         elif market_context and market_context.get('trading_day_in_progress') is None:
-            daily_close_label = "日K价格字段（日期未核验，可能为盘中暂值）"
-            daily_volume_label = "日K成交量字段（统计周期未核验）"
-            daily_amount_label = "日K成交额字段（统计周期未核验）"
-            realtime_price_label = "行情接口返回价（交易时段快照，状态未核验）"
-            intraday_warning = (
-                "当前处于工作日常规交易时间范围，但当日日K日期未能核验。"
-                "行情可能仍处于盘中，禁止将 close 字段称为最终收盘价，"
-                "也不得将成交量/成交额称为全天最终数据；应明确标注行情日期和时点。"
-            )
+            if quality_blocks_decision:
+                daily_close_label = f"最新可用日K收盘价（{daily_data_date}历史数据，非当前行情）"
+                daily_volume_label = f"最新可用日K成交量（{daily_data_date}历史数据）"
+                daily_amount_label = f"最新可用日K成交额（{daily_data_date}历史数据）"
+                realtime_price_label = "实时行情接口快照（独立来源，未与当日日K核验）"
+                intraday_warning = (
+                    f"最新可用日K日期为 {daily_data_date}，未覆盖分析日期。"
+                    "该日K的价格、均线、涨跌幅、成交量和成交额均属于历史数据；"
+                    "不得将其描述为当前价、当日涨跌或当前交易日量能，"
+                    "也不得基于这些历史指标生成当前买卖建议。"
+                )
+            else:
+                daily_close_label = "日K价格字段（日期未核验，可能为盘中暂值）"
+                daily_volume_label = "日K成交量字段（统计周期未核验）"
+                daily_amount_label = "日K成交额字段（统计周期未核验）"
+                realtime_price_label = "行情接口返回价（交易时段快照，状态未核验）"
+                intraday_warning = (
+                    "当前处于工作日常规交易时间范围，但当日日K日期未能核验。"
+                    "行情可能仍处于盘中，禁止将 close 字段称为最终收盘价，"
+                    "也不得将成交量/成交额称为全天最终数据；应明确标注行情日期和时点。"
+                )
         elif market_context:
             daily_close_label = "日K收盘价字段（日期以行情数据为准）"
             daily_volume_label = "日K成交量（日期以行情数据为准）"
@@ -1005,10 +1119,10 @@ class GeminiAnalyzer:
 | 指标 | 数值 |
 |------|------|
 | {daily_close_label} | {today.get('close', 'N/A')} 元 |
-| 开盘价字段（盘中可能变化） | {today.get('open', 'N/A')} 元 |
-| 最高价字段（盘中可能变化） | {today.get('high', 'N/A')} 元 |
-| 最低价字段（盘中可能变化） | {today.get('low', 'N/A')} 元 |
-| 涨跌幅字段（盘中可能变化） | {today.get('pct_chg', 'N/A')}% |
+| {'历史日K开盘价' if quality_blocks_decision else '开盘价字段（盘中可能变化）'} | {today.get('open', 'N/A')} 元 |
+| {'历史日K最高价' if quality_blocks_decision else '最高价字段（盘中可能变化）'} | {today.get('high', 'N/A')} 元 |
+| {'历史日K最低价' if quality_blocks_decision else '最低价字段（盘中可能变化）'} | {today.get('low', 'N/A')} 元 |
+| {'历史日K涨跌幅' if quality_blocks_decision else '涨跌幅字段（盘中可能变化）'} | {today.get('pct_chg', 'N/A')}% |
 | {daily_volume_label} | {self._format_volume(today.get('volume'))} |
 | {daily_amount_label} | {self._format_amount(today.get('amount'))} |
 
@@ -1032,6 +1146,7 @@ class GeminiAnalyzer:
 | 指标 | 数值 | 解读 |
 |------|------|------|
 | {realtime_price_label} | {rt.get('price', 'N/A')} 元 | |
+| 实时行情涨跌幅 | {rt.get('change_pct', 'N/A')}% | 来源：{rt.get('source', '未知')} |
 | **量比** | **{rt.get('volume_ratio', 'N/A')}** | {rt.get('volume_ratio_desc', '')} |
 | **换手率** | **{rt.get('turnover_rate', 'N/A')}%** | |
 | 市盈率(动态) | {rt.get('pe_ratio', 'N/A')} | |
@@ -1121,6 +1236,21 @@ class GeminiAnalyzer:
 在回答技术面问题（如均线、乖离率）时，请直接说明“数据缺失，无法判断”，**严禁编造数据**。
 """
         
+        if quality_blocks_decision:
+            quality_reason = market_data_quality.get('reason') or intraday_warning
+            prompt += f"""
+
+## ⚠️ 行情数据质量拦截
+- 校验结果：未通过，禁止输出买入、加仓、减仓或卖出结论。
+- 最新可用日K日期：{daily_data_date}；分析时点：北京时间 {market_as_of}。
+- 风险原因：{quality_reason}
+- 日K与其均线、涨跌幅、成交量、成交额只代表上述历史日期，不代表当前交易日。
+- 实时行情快照单独展示，不得与不同日期或不同复权基准的日K价格直接比较。
+- 必须给出“观望/数据待核验”；空仓者暂停新开仓，持仓者不要依据本报告调整仓位。
+- 不得生成具体建仓价、加仓计划、止损位、止盈位或建议仓位；对应字段必须写“暂停提供”。
+
+"""
+
         # 再次强调行情时点，避免模型在生成自然语言结论时混淆盘中价与收盘价。
         prompt += f"""
 
