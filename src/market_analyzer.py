@@ -13,7 +13,6 @@
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 import pandas as pd
@@ -21,6 +20,7 @@ import pandas as pd
 from src.config import get_config
 from src.search_service import SearchService
 from data_provider.base import DataFetcherManager
+from src.time_utils import now_china
 
 logger = logging.getLogger(__name__)
 SMALL_SECTOR_CONSTITUENT_THRESHOLD = 3
@@ -109,7 +109,7 @@ class MarketAnalyzer:
         Returns:
             MarketOverview: 市场概览数据对象
         """
-        now = datetime.now()
+        now = now_china()
         today = now.strftime('%Y-%m-%d')
 
         overview = MarketOverview(
@@ -309,7 +309,7 @@ class MarketAnalyzer:
             return []
         
         all_news = []
-        today = datetime.now()
+        today = now_china()
         date_str = today.strftime('%Y年%m月%d日')
 
         # 多维度搜索
@@ -447,8 +447,10 @@ class MarketAnalyzer:
 - 如果主要指数行情缺失，不得使用“上涨、下跌、震荡整理、强势”等词判断当日市场方向；必须明确写明指数行情未获取
 - 如果指数行情、涨跌统计和成交额均缺失，后市展望只能列出待观察事项，不得给出方向性预测
 - 只分析输入中实际存在且有效的数据；新闻只能作为新闻信息，不能替代缺失的行情统计
+- 所有时间字段均为北京时间（Asia/Shanghai，UTC+08:00），不得按 UTC 或模型默认时区重新解释
 - 报告必须注明行情采集时间，不得将盘中行情描述为收盘行情
 - 如果行情采集时间不为空，应原样保留该时间
+- 不得仅凭未经确认的时区或时间数字判断盘前、盘中或盘后；交易时段判断必须以明确标注的北京时间为准
 - 对标记为小样本的板块，必须明确说明成分股数量较少、代表性有限，不得仅凭其涨跌幅推断整个行业的普遍走势
 
 ---
@@ -458,7 +460,7 @@ class MarketAnalyzer:
 ## 日期与采集时间
 
 交易日期：{overview.date}
-行情采集时间：{overview.capture_time or "未知"}
+行情采集时间（北京时间，UTC+08:00）：{overview.capture_time or "未知"}
 
 ## 主要指数
 {indices_text if indices_text else "暂无指数数据（接口异常）"}
@@ -585,8 +587,8 @@ class MarketAnalyzer:
 市场有风险，投资需谨慎。以上数据仅供参考，不构成投资建议。
 
 ---
-*行情采集时间: {overview.capture_time or "未知"}*
-*报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*行情采集时间（北京时间，UTC+08:00）: {overview.capture_time or "未知"}*
+*报告生成时间（北京时间，UTC+08:00）: {now_china().strftime('%Y-%m-%d %H:%M:%S')}*
 """
         return report
     

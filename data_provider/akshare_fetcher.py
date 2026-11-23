@@ -188,6 +188,43 @@ class AkshareFetcher(BaseFetcher):
         self.sleep_min = sleep_min
         self.sleep_max = sleep_max
         self._last_request_time: Optional[float] = None
+        # Avoid repeatedly hitting Eastmoney after an explicit rate-limit or gateway failure.
+        self._eastmoney_cooldown_until = 0.0
+        self._eastmoney_cooldown_reason: Optional[str] = None
+
+    def _mark_eastmoney_cooldown(self, error: Exception, cooldown_seconds: int = 300) -> None:
+        """Temporarily stop Eastmoney requests after rate-limit/connection failures."""
+        message = str(error).lower()
+        indicators = (
+            "临时限流",
+            "短时间内请求过多",
+            "服务器断开了连接",
+            "connection reset",
+            "remote end closed connection",
+            "502 server error",
+            "bad gateway",
+        )
+        if any(indicator in message for indicator in indicators):
+            self._eastmoney_cooldown_until = max(
+                self._eastmoney_cooldown_until,
+                time.monotonic() + cooldown_seconds,
+            )
+            self._eastmoney_cooldown_reason = str(error)
+            logger.warning(
+                "[数据源熔断] 东方财富接口暂时停止请求 %d 秒：%s",
+                cooldown_seconds,
+                error,
+            )
+
+    def _eastmoney_is_in_cooldown(self) -> bool:
+        remaining = self._eastmoney_cooldown_until - time.monotonic()
+        if remaining > 0:
+            logger.warning(
+                "[数据源熔断] 东方财富仍在冷却期，剩余约 %d 秒；跳过 EM/Push2，尝试跨供应商数据源",
+                int(remaining),
+            )
+            return True
+        return False
 
     def _set_random_user_agent(self) -> None:
         """
@@ -1405,6 +1442,7 @@ class AkshareFetcher(BaseFetcher):
             return None
 
         except Exception as e:
+            self._mark_eastmoney_cooldown(e)
             logger.error(f"[Akshare] 获取市场统计失败: {e}")
             return None
 
@@ -1630,7 +1668,11 @@ class AkshareFetcher(BaseFetcher):
                 )
             except Exception as e:
                 errors[label] = str(e)
+                self._mark_eastmoney_cooldown(e)
                 logger.warning("[板块排行] Push2 %s获取失败：%s", label, e)
+                if self._eastmoney_is_in_cooldown():
+                    # Do not issue the second request to the same failing provider.
+                    break
 
         top = rankings["1"]
         bottom = rankings["0"]
@@ -1682,13 +1724,20 @@ class AkshareFetcher(BaseFetcher):
         所有来源均失败或数据无效时返回 None，不生成虚假排行。
         """
         self.last_sector_source = None
-        sources = [
-            ("AkShare-东方财富", self._get_sector_rankings_from_em),
-            ("东方财富-Push2", self._get_sector_rankings_from_push2),
-            ("AkShare-同花顺", self._get_sector_rankings_from_ths),
-        ]
+        if self._eastmoney_is_in_cooldown():
+            sources = [
+                ("AkShare-同花顺", self._get_sector_rankings_from_ths),
+            ]
+        else:
+            sources = [
+                ("AkShare-东方财富", self._get_sector_rankings_from_em),
+                ("东方财富-Push2", self._get_sector_rankings_from_push2),
+                ("AkShare-同花顺", self._get_sector_rankings_from_ths),
+            ]
 
         for source_name, fetch_method in sources:
+            if source_name == "东方财富-Push2" and self._eastmoney_is_in_cooldown():
+                continue
             try:
                 result = fetch_method(n)
                 if (
@@ -1704,6 +1753,8 @@ class AkshareFetcher(BaseFetcher):
                     return result
                 logger.warning("[板块排行] %s 未返回有效排行，尝试下一个来源", source_name)
             except Exception as e:
+                if source_name == "AkShare-东方财富":
+                    self._mark_eastmoney_cooldown(e)
                 logger.warning("[板块排行] %s 获取失败，尝试下一个来源：%s", source_name, e)
 
         logger.error("[板块排行] 所有免费数据源均不可用")

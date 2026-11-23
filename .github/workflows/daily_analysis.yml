@@ -185,11 +185,11 @@ jobs:
           
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
-            python main.py --market-review
+            PYTHONFAULTHANDLER=1 python -X faulthandler main.py --market-review
           elif [ "$MODE" = "stocks-only" ]; then
-            python main.py --no-market-review
+            PYTHONFAULTHANDLER=1 python -X faulthandler main.py --no-market-review
           else
-            python main.py
+            PYTHONFAULTHANDLER=1 python -X faulthandler main.py
           fi
       
       - name: 上传分析报告
