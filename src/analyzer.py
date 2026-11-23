@@ -978,13 +978,34 @@ class GeminiAnalyzer:
 
         price_position = data_perspective.setdefault("price_position", {})
         realtime = context.get("realtime") or {}
+        daily_date = quality.get("daily_bar_date") or market_context.get("data_date") or "未知"
         if realtime.get("price") is not None:
             price_position["current_price"] = realtime["price"]
+        for ma_key in ("ma5", "ma10", "ma20"):
+            if price_position.get(ma_key) is not None:
+                price_position[ma_key] = f"历史值 {price_position[ma_key]}（截至{daily_date}）"
+        price_position["bias_ma5"] = "N/A"
         price_position["bias_status"] = "不可判断（日K日期未同步）"
+        price_position["support_level"] = "暂停提供"
+        price_position["resistance_level"] = "暂停提供"
 
         volume = data_perspective.setdefault("volume_analysis", {})
         volume["volume_status"] = "不可判断"
         volume["volume_meaning"] = "当日日K未同步，不能判断当前交易日放量或缩量"
+
+        chip = data_perspective.setdefault("chip_structure", {})
+        chip["profit_ratio"] = "数据未核验"
+        chip["avg_cost"] = "数据未核验"
+        chip["concentration"] = "数据未核验"
+        chip["chip_health"] = "数据未核验"
+
+        intelligence = dashboard.setdefault("intelligence", {})
+        intelligence["sentiment_summary"] = "行情日期未同步，暂不判断当前技术面和资金情绪"
+        intelligence["positive_catalysts"] = ["行情数据质量校验未通过，暂停输出技术面利好判断"]
+        risk_alerts = intelligence.setdefault("risk_alerts", [])
+        if warning not in risk_alerts:
+            risk_alerts.insert(0, warning)
+        result.market_sentiment = "行情数据日期未同步，暂不判断当前市场情绪"
 
         battle_plan = dashboard.setdefault("battle_plan", {})
         battle_plan["sniper_points"] = {
