@@ -34,27 +34,31 @@ def get_a_share_market_context(
     normalized_data_date = str(data_date)[:10] if data_date else None
     daily_bar_matches_today = normalized_data_date == current.date().isoformat()
 
-    if is_in_standard_hours and not daily_bar_matches_today:
-        phase = "session_unverified"
-        phase_label = "工作日常规交易时段（当日日K日期未核验）"
-    elif not is_weekday:
-        phase = "weekend"
+    # 先识别真实时段，再单独标记日K日期核验状态，避免午休被笼统覆盖。
+    if not is_weekday:
+        session_phase = "weekend"
         phase_label = "周末休市"
     elif current_time < time(9, 30):
-        phase = "pre_open"
+        session_phase = "pre_open"
         phase_label = "开盘前"
     elif current_time < time(11, 30):
-        phase = "morning_session"
+        session_phase = "morning_session"
         phase_label = "上午交易时段"
     elif current_time < time(13, 0):
-        phase = "lunch_break"
+        session_phase = "lunch_break"
         phase_label = "午间休市（当日交易尚未结束）"
     elif current_time < time(15, 0):
-        phase = "afternoon_session"
+        session_phase = "afternoon_session"
         phase_label = "下午交易时段"
     else:
-        phase = "post_close"
+        session_phase = "post_close"
         phase_label = "收盘后"
+
+    if is_in_standard_hours and not daily_bar_matches_today:
+        phase = "session_unverified"
+        phase_label = f"{phase_label}（当日日K日期未核验）"
+    else:
+        phase = session_phase
 
     # 午间休市期间，当天日K仍未最终定稿，因此整个 09:30–15:00
     # 区间均按“交易日进行中”处理；但必须核验日K日期。
@@ -69,6 +73,7 @@ def get_a_share_market_context(
         "as_of": current.strftime("%Y-%m-%d %H:%M:%S"),
         "timezone": "Asia/Shanghai",
         "phase": phase,
+        "session_phase": session_phase,
         "phase_label": phase_label,
         "is_weekday": is_weekday,
         "data_date": normalized_data_date,
