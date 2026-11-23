@@ -183,6 +183,7 @@ class MarketDataQualityTests(unittest.TestCase):
             "stock_name": "贵州茅台",
             "date": "2026-11-20",
             "today": {"close": 1485.75, "pct_chg": 1.75, "ma5": 1460.04},
+            "yesterday": {"date": "2026-11-19"},
             "realtime": {"price": 1444.84, "change_pct": -2.75, "source": "tencent"},
             "market_context": {
                 "phase": "session_unverified",
