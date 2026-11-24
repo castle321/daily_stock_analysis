@@ -22,7 +22,7 @@ class NewsFeedTests(unittest.TestCase):
         )
 
     def test_parse_rss_items_and_normalize_dates(self):
-        payload = b"""<?xml version="1.0" encoding="UTF-8"?>
+        payload = """<?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0"><channel>
           <item>
             <title><![CDATA[液冷行业出现新进展]]></title>
@@ -31,7 +31,7 @@ class NewsFeedTests(unittest.TestCase):
             <pubDate>Tue, 24 Nov 2026 09:30:00 +0800</pubDate>
             <guid>article-1</guid>
           </item>
-        </channel></rss>"""
+        </channel></rss>""".encode("utf-8")
 
         articles = parse_rss(payload, self.source)
 
@@ -42,7 +42,7 @@ class NewsFeedTests(unittest.TestCase):
         self.assertEqual(articles[0].published_at, "2026-11-24T01:30:00+00:00")
 
     def test_parse_atom_feed(self):
-        payload = b"""<?xml version="1.0" encoding="UTF-8"?>
+        payload = """<?xml version="1.0" encoding="UTF-8"?>
         <feed xmlns="http://www.w3.org/2005/Atom">
           <entry>
             <title>公司公告</title>
@@ -51,7 +51,7 @@ class NewsFeedTests(unittest.TestCase):
             <updated>2026-11-24T10:00:00+08:00</updated>
             <id>tag:example.com,2026:1</id>
           </entry>
-        </feed>"""
+        </feed>""".encode("utf-8")
 
         articles = parse_rss(payload, self.source)
 
@@ -81,9 +81,9 @@ class NewsFeedTests(unittest.TestCase):
     def test_collector_continues_when_one_feed_fails(self):
         session = Mock()
         good_response = Mock()
-        good_response.content = b"""<rss><channel><item>
+        good_response.content = """<rss><channel><item>
           <title>可用新闻</title><link>https://example.com/good</link>
-        </item></channel></rss>"""
+        </item></channel></rss>""".encode("utf-8")
         good_response.raise_for_status.return_value = None
         session.get.side_effect = [RuntimeError("temporary failure"), good_response]
 
