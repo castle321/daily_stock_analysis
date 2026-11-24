@@ -19,6 +19,7 @@ class RssNewsSearchAdapterTests(unittest.TestCase):
             url="https://example.com/news/1",
             source="测试 RSS",
             category="macro",
+            published_at="2026-11-24T01:30:00+00:00",
         )
         collector = Mock()
         collector.collect_once.return_value = [article]
@@ -53,6 +54,10 @@ class RssNewsSearchAdapterTests(unittest.TestCase):
         self.assertEqual(
             [item.title for item in first.results],
             ["宏观政策新闻", "搜索补充新闻"],
+        )
+        self.assertEqual(
+            first.results[0].published_date,
+            "2026-11-24 09:30:00 北京时间",
         )
         self.assertEqual(
             [item.title for item in second.results],
