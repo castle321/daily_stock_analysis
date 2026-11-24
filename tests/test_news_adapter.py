@@ -67,6 +67,32 @@ class RssNewsSearchAdapterTests(unittest.TestCase):
         store.save_many.assert_called_once_with([article])
         self.assertEqual(fallback.search_stock_news.call_count, 2)
 
+    def test_stock_intel_includes_exact_name_rss_matches_without_api_keys(self):
+        article = NewsArticle(
+            title="英维克液冷产品订单进展",
+            summary="英维克相关订单新闻",
+            url="https://example.com/yingweike",
+            source="测试 RSS",
+            category="stock",
+        )
+        collector = Mock()
+        collector.collect_once.return_value = [article]
+        adapter = RssNewsSearchAdapter(
+            collector=collector,
+            store=Mock(),
+        )
+
+        result = adapter.search_comprehensive_intel(
+            stock_code="002837",
+            stock_name="英维克",
+        )
+        report = adapter.format_intel_report(result, "英维克")
+
+        self.assertIn("latest_news", result)
+        self.assertEqual(result["latest_news"].results[0].title, article.title)
+        self.assertIn("英维克液冷产品订单进展", report)
+        self.assertIn("测试 RSS", report)
+
     def test_rss_works_without_paid_or_keyed_search_provider(self):
         article = NewsArticle(
             title="财经快讯",
