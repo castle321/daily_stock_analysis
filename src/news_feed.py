@@ -213,6 +213,15 @@ class NewsStore:
                 "CREATE INDEX IF NOT EXISTS ix_news_articles_category "
                 "ON news_articles(category, published_at)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS news_alerts (
+                    url TEXT PRIMARY KEY,
+                    level TEXT NOT NULL,
+                    notified_at TEXT NOT NULL
+                )
+                """
+            )
 
     def save_many(self, articles: Iterable[NewsArticle]) -> int:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -246,6 +255,18 @@ class NewsStore:
                 )
                 inserted += max(cursor.rowcount, 0)
         return inserted
+
+    def claim_alert(self, url: str, level: str = "P0") -> bool:
+        """Atomically reserve a one-time alert for a news URL."""
+        if not url:
+            return False
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO news_alerts (url, level, notified_at) "
+                "VALUES (?, ?, ?)",
+                (url, level, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            )
+            return cursor.rowcount > 0
 
     def recent(self, limit: int = 100) -> List[dict]:
         with self._connect() as conn:
@@ -389,3 +410,136 @@ class RssNewsSearchAdapter:
             provider="+".join(providers) or "RSS",
             success=True,
         )
+
+
+
+P0_KEYWORDS = (
+    "重大合同", "重大资产重组", "立案调查", "行政处罚",
+    "业绩预告", "业绩快报", "停牌", "退市风险", "重大诉讼",
+)
+
+
+def classify_news_importance(article: NewsArticle) -> str:
+    """Conservative title-only rule; AI review is deliberately not run in the poll loop."""
+    title = article.title or ""
+    if any(keyword in title for keyword in P0_KEYWORDS):
+        return "P0"
+    if article.category in ("stock", "macro") or any(
+        keyword in title for keyword in ("政策", "中标", "订单", "涨价", "降价")
+    ):
+        return "P1"
+    return "P2"
+
+
+class NewsMonitor:
+    def __init__(
+        self,
+        collector: Optional[NewsFeedCollector] = None,
+        store: Optional[NewsStore] = None,
+        notifier=None,
+    ):
+        self.collector = collector or NewsFeedCollector()
+        self.store = store or NewsStore()
+        self.notifier = notifier
+
+    def collect_once(self) -> List[NewsArticle]:
+        articles = self.collector.collect_once()
+        inserted = self.store.save_many(articles)
+        logger.info(
+            "[新闻监控] 本轮采集 %d 条，新增入库 %d 条",
+            len(articles),
+            inserted,
+        )
+        return articles
+
+    def notify_critical(self, articles: Iterable[NewsArticle], lookback_seconds: int = 600) -> int:
+        if not self.notifier or not self.notifier.is_available():
+            return 0
+        cutoff = datetime.now(timezone.utc).timestamp() - max(60, lookback_seconds)
+        sent = 0
+        for article in articles:
+            if classify_news_importance(article) != "P0" or not article.published_at:
+                continue
+            try:
+                published = datetime.fromisoformat(
+                    article.published_at.replace("Z", "+00:00")
+                )
+                if published.tzinfo is None:
+                    published = published.replace(tzinfo=timezone.utc)
+                if published.timestamp() < cutoff:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            if not self.store.claim_alert(article.url, "P0"):
+                continue
+            message = (
+                "【DSA 盘中重要新闻提醒】\\n"
+                f"等级：P0\\n来源：{article.source}\\n"
+                f"发布时间：{article.published_at}\\n"
+                f"标题：{article.title}\\n"
+                f"摘要：{article.summary or '暂无摘要'}\\n"
+                f"原文：{article.url}\\n"
+                "说明：规则筛选结果，仍需核验原文及行情反应。"
+            )
+            if self.notifier.send(message):
+                sent += 1
+        return sent
+
+
+def _is_a_share_monitor_window(now: datetime) -> bool:
+    """Weekday/time gate only; exchange holiday calendar will be added separately."""
+    local_time = now.astimezone(__import__("zoneinfo").ZoneInfo("Asia/Shanghai"))
+    if local_time.weekday() >= 5:
+        return False
+    current = local_time.time()
+    from datetime import time as time_type
+    return (
+        time_type(8, 45) <= current <= time_type(11, 35)
+        or time_type(12, 55) <= current <= time_type(15, 10)
+    )
+
+
+def run_watch(interval_seconds: int = 180):
+    """Poll RSS during A-share sessions; P0 alerts are deduplicated by article URL."""
+    from src.notification import NotificationService
+
+    monitor = NewsMonitor(notifier=NotificationService())
+    interval = max(60, int(interval_seconds))
+    logger.info("[新闻监控] 启动，轮询间隔 %d 秒", interval)
+    while True:
+        now = datetime.now(timezone.utc)
+        if _is_a_share_monitor_window(now):
+            articles = monitor.collect_once()
+            alerted = monitor.notify_critical(
+                articles,
+                lookback_seconds=max(interval * 2, 600),
+            )
+            logger.info("[新闻监控] 本轮 P0 告警 %d 条", alerted)
+            time.sleep(interval)
+        else:
+            time.sleep(min(interval, 300))
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="DSA 免费 RSS 新闻采集与盘中监控")
+    parser.add_argument("--once", action="store_true", help="采集一次并写入 SQLite，不发送告警")
+    parser.add_argument("--watch", action="store_true", help="在 A 股工作日交易时段持续采集并推送 P0")
+    parser.add_argument("--interval", type=int, default=180, help="盘中轮询间隔秒数，默认 180")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+    if args.watch:
+        run_watch(args.interval)
+        return
+    monitor = NewsMonitor()
+    articles = monitor.collect_once()
+    print(f"采集完成：{len(articles)} 条；数据库：{monitor.store.db_path}")
+
+
+if __name__ == "__main__":
+    main()
