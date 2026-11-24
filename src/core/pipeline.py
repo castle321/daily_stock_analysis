@@ -24,6 +24,7 @@ from data_provider.realtime_types import ChipDistribution
 from src.analyzer import GeminiAnalyzer, AnalysisResult, STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.search_service import SearchService
+from src.news_feed import RssNewsSearchAdapter
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from bot.models import BotMessage
@@ -77,12 +78,13 @@ class StockAnalysisPipeline:
         self.analyzer = GeminiAnalyzer()
         self.notifier = NotificationService(source_message=source_message)
         
-        # 初始化搜索服务
-        self.search_service = SearchService(
+        # 免费 RSS 作为新闻基础源，现有搜索 API 继续作为补充源。
+        search_fallback = SearchService(
             bocha_keys=self.config.bocha_api_keys,
             tavily_keys=self.config.tavily_api_keys,
             serpapi_keys=self.config.serpapi_keys,
         )
+        self.search_service = RssNewsSearchAdapter(fallback=search_fallback)
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         logger.info("已启用趋势分析器 (MA5>MA10>MA20 多头判断)")
@@ -96,9 +98,9 @@ class StockAnalysisPipeline:
         else:
             logger.info("筹码分布分析已禁用")
         if self.search_service.is_available:
-            logger.info("搜索服务已启用 (Tavily/SerpAPI)")
+            logger.info("新闻服务已启用 (免费 RSS + 可选搜索 API)")
         else:
-            logger.warning("搜索服务未启用（未配置 API Key）")
+            logger.warning("搜索 API 未配置，将仅使用免费 RSS 新闻源")
     
     def fetch_and_save_stock_data(
         self, 
