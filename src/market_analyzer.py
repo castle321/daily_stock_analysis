@@ -434,12 +434,12 @@ class MarketAnalyzer:
             published = str(news_value("published_date") or "发布时间未提供")[:40]
             url = str(news_value("url") or "")
             news_text += (
-                f"{i}. [{source}] {title}\\n"
-                f"   源站发布时间：{published}\\n"
-                f"   摘要：{snippet}\\n"
+                f"{i}. [{source}] {title}\n"
+                f"   源站发布时间：{published}\n"
+                f"   摘要：{snippet}\n"
             )
             if url:
-                news_text += f"   原文链接：{url}\\n"
+                news_text += f"   原文链接：{url}\n"
 
         prompt = f"""你是一位专业的A/H/美股市场分析师，请根据以下数据生成一份简洁的大盘复盘报告。
 
@@ -585,11 +585,11 @@ class MarketAnalyzer:
                 continue
             line = f"- **[{source}] {title}**（{published}）"
             if snippet:
-                line += f"\\n  {snippet[:240]}"
+                line += f"\n  {snippet[:240]}"
             if url:
-                line += f"\\n  原文：{url}"
+                line += f"\n  原文：{url}"
             news_lines.append(line)
-        news_text = "\\n".join(news_lines) or "未获取到可用新闻，请检查 RSS 和搜索服务状态。"
+        news_text = "\n".join(news_lines) or "未获取到可用新闻，请检查 RSS 和搜索服务状态。"
 
         report = f"""## 📊 {overview.date} 大盘复盘
 
