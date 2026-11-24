@@ -133,6 +133,21 @@ def _parse_published_at(value: str) -> Optional[str]:
     return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
+def _format_china_published_at(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
+            "%Y-%m-%d %H:%M:%S 北京时间"
+        )
+    except (TypeError, ValueError):
+        return value
+
+
 def parse_rss(xml_content: bytes, source: NewsFeedSource) -> List[NewsArticle]:
     """Parse RSS 2.0, RSS 1.0 and Atom feeds without an extra dependency."""
     root = ElementTree.fromstring(xml_content)
@@ -365,7 +380,7 @@ class RssNewsSearchAdapter:
                 snippet=item.summary,
                 url=item.url,
                 source=item.source,
-                published_date=item.published_at,
+                published_date=_format_china_published_at(item.published_at),
             )
             for item in articles
         ]
@@ -486,7 +501,12 @@ class NewsMonitor:
                 f"原文：{article.url}\\n"
                 "说明：规则筛选结果，仍需核验原文及行情反应。"
             )
-            if self.notifier.send(message):
+            try:
+                delivered = self.notifier.send(message)
+            except Exception:
+                logger.exception("[新闻监控] P0 告警推送异常：%s", article.url)
+                delivered = False
+            if delivered:
                 sent += 1
             else:
                 self.store.release_alert(article.url)
