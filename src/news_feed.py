@@ -268,6 +268,11 @@ class NewsStore:
             )
             return cursor.rowcount > 0
 
+    def release_alert(self, url: str) -> None:
+        """Allow retry when notification delivery fails."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM news_alerts WHERE url = ?", (url,))
+
     def recent(self, limit: int = 100) -> List[dict]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -483,6 +488,8 @@ class NewsMonitor:
             )
             if self.notifier.send(message):
                 sent += 1
+            else:
+                self.store.release_alert(article.url)
         return sent
 
 
