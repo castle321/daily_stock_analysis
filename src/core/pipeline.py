@@ -24,10 +24,12 @@ from data_provider.realtime_types import ChipDistribution
 from src.analyzer import GeminiAnalyzer, AnalysisResult, STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.search_service import SearchService
+from src.news_feed import RssNewsSearchAdapter
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from bot.models import BotMessage
 from src.market_session import get_a_share_market_context
+from src.market_data_quality import assess_market_data_quality
 
 
 logger = logging.getLogger(__name__)
@@ -76,12 +78,13 @@ class StockAnalysisPipeline:
         self.analyzer = GeminiAnalyzer()
         self.notifier = NotificationService(source_message=source_message)
         
-        # 初始化搜索服务
-        self.search_service = SearchService(
+        # 免费 RSS 作为新闻基础源，现有搜索 API 继续作为补充源。
+        search_fallback = SearchService(
             bocha_keys=self.config.bocha_api_keys,
             tavily_keys=self.config.tavily_api_keys,
             serpapi_keys=self.config.serpapi_keys,
         )
+        self.search_service = RssNewsSearchAdapter(fallback=search_fallback)
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         logger.info("已启用趋势分析器 (MA5>MA10>MA20 多头判断)")
@@ -95,9 +98,9 @@ class StockAnalysisPipeline:
         else:
             logger.info("筹码分布分析已禁用")
         if self.search_service.is_available:
-            logger.info("搜索服务已启用 (Tavily/SerpAPI)")
+            logger.info("新闻服务已启用 (免费 RSS + 可选搜索 API)")
         else:
-            logger.warning("搜索服务未启用（未配置 API Key）")
+            logger.warning("搜索 API 未配置，将仅使用免费 RSS 新闻源")
     
     def fetch_and_save_stock_data(
         self, 
@@ -350,11 +353,15 @@ class StockAnalysisPipeline:
 
         # 添加实时行情（兼容不同数据源的字段差异）
         if realtime_quote:
-            # 使用 getattr 安全获取字段，缺失字段返回 None 或默认值
             volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
+            quote_source = getattr(realtime_quote, 'source', None)
+            if hasattr(quote_source, 'value'):
+                quote_source = quote_source.value
             enhanced['realtime'] = {
                 'name': getattr(realtime_quote, 'name', ''),
                 'price': getattr(realtime_quote, 'price', None),
+                'change_pct': getattr(realtime_quote, 'change_pct', None),
+                'pre_close': getattr(realtime_quote, 'pre_close', None),
                 'volume_ratio': volume_ratio,
                 'volume_ratio_desc': self._describe_volume_ratio(volume_ratio) if volume_ratio else '无数据',
                 'turnover_rate': getattr(realtime_quote, 'turnover_rate', None),
@@ -363,10 +370,24 @@ class StockAnalysisPipeline:
                 'total_mv': getattr(realtime_quote, 'total_mv', None),
                 'circ_mv': getattr(realtime_quote, 'circ_mv', None),
                 'change_60d': getattr(realtime_quote, 'change_60d', None),
-                'source': getattr(realtime_quote, 'source', None),
+                'source': quote_source,
             }
-            # 移除 None 值以减少上下文大小
-            enhanced['realtime'] = {k: v for k, v in enhanced['realtime'].items() if v is not None}
+            enhanced['realtime'] = {
+                k: v for k, v in enhanced['realtime'].items() if v is not None
+            }
+
+        # 检查日K日期与实时涨跌幅，避免将旧日K的技术信号用于当前交易决策。
+        enhanced['market_data_quality'] = assess_market_data_quality(
+            market_context=enhanced['market_context'],
+            daily_data=context.get('today') or {},
+            realtime_data=enhanced.get('realtime') or {},
+        )
+        if enhanced['market_data_quality']['blocks_actionable_decision']:
+            logger.error(
+                f"[{context.get('code', 'unknown')}] 行情质量校验未通过，"
+                f"暂停使用技术信号生成交易决策："
+                f"{enhanced['market_data_quality']['reason']}"
+            )
         
         # 添加筹码分布
         if chip_data:
@@ -379,8 +400,8 @@ class StockAnalysisPipeline:
                 'chip_status': chip_data.get_chip_status(current_price or 0),
             }
         
-        # 添加趋势分析结果
-        if trend_result:
+        # 添加趋势分析结果；行情日期未核验时，该结果也来自旧日K，必须停用。
+        if trend_result and not enhanced['market_data_quality']['blocks_actionable_decision']:
             enhanced['trend_analysis'] = {
                 'trend_status': trend_result.trend_status.value,
                 'ma_alignment': trend_result.ma_alignment,
@@ -394,7 +415,11 @@ class StockAnalysisPipeline:
                 'signal_reasons': trend_result.signal_reasons,
                 'risk_factors': trend_result.risk_factors,
             }
-        
+        if enhanced['market_data_quality']['blocks_actionable_decision']:
+            # 这些变化率来自最近两条历史日K，不能伪装成当前交易日量价变化。
+            enhanced.pop('volume_change_ratio', None)
+            enhanced.pop('price_change_ratio', None)
+
         return enhanced
     
     def _describe_volume_ratio(self, volume_ratio: float) -> str:

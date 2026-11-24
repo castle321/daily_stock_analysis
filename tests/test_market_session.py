@@ -42,6 +42,17 @@ class AShareMarketSessionTests(unittest.TestCase):
         self.assertEqual(context["phase"], "session_unverified")
         self.assertIsNone(context["trading_day_in_progress"])
 
+    def test_unverified_lunch_break_keeps_lunch_phase_label(self):
+        context = get_a_share_market_context(
+            datetime(2026, 11, 23, 12, 37),
+            data_date="2026-11-20",
+        )
+        self.assertEqual(context["phase"], "session_unverified")
+        self.assertEqual(context["session_phase"], "lunch_break")
+        self.assertIn("午间休市", context["phase_label"])
+        self.assertIn("当日日K日期未核验", context["phase_label"])
+        self.assertIsNone(context["trading_day_in_progress"])
+
     def test_weekend_is_not_marked_as_trading_day(self):
         context = get_a_share_market_context(datetime(2026, 11, 22, 10, 0), data_date="2026-11-20")
         self.assertEqual(context["phase"], "weekend")
