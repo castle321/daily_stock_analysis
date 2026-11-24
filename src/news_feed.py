@@ -386,6 +386,78 @@ class RssNewsSearchAdapter:
         ]
         return self._rss_results
 
+    def search_comprehensive_intel(
+        self,
+        stock_code: str,
+        stock_name: str,
+        max_searches: int = 3,
+    ):
+        """Merge exact-name/code RSS matches into the existing stock-intel result."""
+        results = {}
+        if self.fallback and self.fallback.is_available:
+            results = self.fallback.search_comprehensive_intel(
+                stock_code=stock_code,
+                stock_name=stock_name,
+                max_searches=max_searches,
+            ) or {}
+
+        matched = []
+        name_key = (stock_name or "").strip().lower()
+        code_key = (stock_code or "").strip().lower()
+        for item in self._load_rss_results():
+            haystack = f"{item.title} {item.snippet}".lower()
+            if (name_key and name_key in haystack) or (code_key and code_key in haystack):
+                matched.append(item)
+
+        if matched:
+            existing = results.get("latest_news")
+            combined = list(matched)
+            if existing and existing.results:
+                combined.extend(existing.results)
+            deduplicated = []
+            seen = set()
+            for item in combined:
+                key = (item.url or "").strip() or item.title.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    deduplicated.append(item)
+            results["latest_news"] = SearchResponse(
+                query=f"{stock_name} {stock_code} RSS 新闻",
+                results=deduplicated[:6],
+                provider=(
+                    f"RSS+{existing.provider}"
+                    if existing and existing.provider else "RSS"
+                ),
+                success=True,
+            )
+        elif "latest_news" not in results:
+            results["latest_news"] = SearchResponse(
+                query=f"{stock_name} {stock_code} RSS 新闻",
+                results=[],
+                provider="RSS",
+                success=True,
+            )
+        return results
+
+    def format_intel_report(self, intel_results, stock_name: str) -> str:
+        if self.fallback and hasattr(self.fallback, "format_intel_report"):
+            return self.fallback.format_intel_report(intel_results, stock_name)
+        lines = [f"【{stock_name} 情报搜索结果】"]
+        for dimension, response in intel_results.items():
+            lines.append(f"\\n{dimension}（来源：{response.provider}）")
+            for index, item in enumerate(response.results[:6], 1):
+                lines.append(
+                    f"{index}. [{item.source}] {item.title} "
+                    f"[{item.published_date or '发布时间未提供'}]"
+                )
+                if item.snippet:
+                    lines.append(f"   {item.snippet[:240]}")
+                if item.url:
+                    lines.append(f"   原文：{item.url}")
+            if not response.results:
+                lines.append("未找到相关信息")
+        return "\\n".join(lines)
+
     def search_stock_news(
         self,
         stock_code: str,
