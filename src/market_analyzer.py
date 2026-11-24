@@ -422,18 +422,25 @@ class MarketAnalyzer:
             if overview.total_amount is not None else "暂无数据"
         )
 
-        # 新闻信息 - 支持 SearchResult 对象或字典
+        # 新闻信息：保留来源、源站发布时间和原文链接，便于核验。
         news_text = ""
-        for i, n in enumerate(news[:6], 1):
-            # 兼容 SearchResult 对象和字典
-            if hasattr(n, 'title'):
-                title = n.title[:50] if n.title else ''
-                snippet = n.snippet[:100] if n.snippet else ''
-            else:
-                title = n.get('title', '')[:50]
-                snippet = n.get('snippet', '')[:100]
-            news_text += f"{i}. {title}\n   {snippet}\n"
-        
+        for i, n in enumerate(news[:9], 1):
+            def news_value(key, default=""):
+                return getattr(n, key, default) if hasattr(n, key) else n.get(key, default)
+
+            title = str(news_value("title") or "")[:100]
+            snippet = str(news_value("snippet") or "")[:240]
+            source = str(news_value("source") or "未知来源")[:80]
+            published = str(news_value("published_date") or "发布时间未提供")[:40]
+            url = str(news_value("url") or "")
+            news_text += (
+                f"{i}. [{source}] {title}\\n"
+                f"   源站发布时间：{published}\\n"
+                f"   摘要：{snippet}\\n"
+            )
+            if url:
+                news_text += f"   原文链接：{url}\\n"
+
         prompt = f"""你是一位专业的A/H/美股市场分析师，请根据以下数据生成一份简洁的大盘复盘报告。
 
 【重要】输出要求：
@@ -498,10 +505,13 @@ class MarketAnalyzer:
 ### 四、热点解读
 （仅在板块排行有效时分析板块；没有板块数据时明确说明未获取）
 
-### 五、后市观察
-（结合有效行情和新闻列出观察事项；关键行情缺失时不作方向性预测）
+### 五、新闻与事件驱动
+（区分公司公告、权威媒体报道和一般市场消息；归纳宏观政策、行业产业链和上市公司事件；说明涉及行业/公司、潜在影响方向及影响周期；明确区分已确认事实与媒体推测；新闻没有明确证据时标注待核实；每条重要新闻保留来源、发布时间和原文链接；不得仅凭新闻标题推断利好或利空）
 
-### 六、风险提示
+### 六、后市观察
+（结合有效行情和新闻列出观察事项；关键行情缺失时不作方向性预测；说明新闻是否已被当日行情验证或可能已提前反映）
+
+### 七、风险提示
 （需要关注的风险点）
 
 ---
@@ -561,6 +571,26 @@ class MarketAnalyzer:
             if overview.total_amount is not None else "暂无数据"
         )
 
+        news_lines = []
+        for item in news[:9]:
+            def news_value(key, default=""):
+                return getattr(item, key, default) if hasattr(item, key) else item.get(key, default)
+
+            title = str(news_value("title") or "").strip()
+            source = str(news_value("source") or "未知来源").strip()
+            published = str(news_value("published_date") or "发布时间未提供").strip()
+            snippet = str(news_value("snippet") or "").strip()
+            url = str(news_value("url") or "").strip()
+            if not title:
+                continue
+            line = f"- **[{source}] {title}**（{published}）"
+            if snippet:
+                line += f"\\n  {snippet[:240]}"
+            if url:
+                line += f"\\n  原文：{url}"
+            news_lines.append(line)
+        news_text = "\\n".join(news_lines) or "未获取到可用新闻，请检查 RSS 和搜索服务状态。"
+
         report = f"""## 📊 {overview.date} 大盘复盘
 
 ### 一、市场总结
@@ -583,7 +613,12 @@ class MarketAnalyzer:
 - **领涨**: {top_text}
 - **领跌**: {bottom_text}
 
-### 五、风险提示
+### 五、新闻与事件驱动
+{news_text}
+
+说明：本章节仅整理新闻事实和来源，不将媒体报道或未经核实的信息直接视为公司公告或确定性利好利空。
+
+### 六、风险提示
 市场有风险，投资需谨慎。以上数据仅供参考，不构成投资建议。
 
 ---
