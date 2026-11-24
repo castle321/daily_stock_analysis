@@ -444,7 +444,7 @@ class RssNewsSearchAdapter:
             return self.fallback.format_intel_report(intel_results, stock_name)
         lines = [f"【{stock_name} 情报搜索结果】"]
         for dimension, response in intel_results.items():
-            lines.append(f"\\n{dimension}（来源：{response.provider}）")
+            lines.append(f"\n{dimension}（来源：{response.provider}）")
             for index, item in enumerate(response.results[:6], 1):
                 lines.append(
                     f"{index}. [{item.source}] {item.title} "
@@ -456,7 +456,7 @@ class RssNewsSearchAdapter:
                     lines.append(f"   原文：{item.url}")
             if not response.results:
                 lines.append("未找到相关信息")
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
     def search_stock_news(
         self,
@@ -565,12 +565,12 @@ class NewsMonitor:
             if not self.store.claim_alert(article.url, "P0"):
                 continue
             message = (
-                "【DSA 盘中重要新闻提醒】\\n"
-                f"等级：P0\\n来源：{article.source}\\n"
-                f"发布时间：{article.published_at}\\n"
-                f"标题：{article.title}\\n"
-                f"摘要：{article.summary or '暂无摘要'}\\n"
-                f"原文：{article.url}\\n"
+                "【DSA 盘中重要新闻提醒】\n"
+                f"等级：P0\n来源：{article.source}\n"
+                f"发布时间：{article.published_at}\n"
+                f"标题：{article.title}\n"
+                f"摘要：{article.summary or '暂无摘要'}\n"
+                f"原文：{article.url}\n"
                 "说明：规则筛选结果，仍需核验原文及行情反应。"
             )
             try:
