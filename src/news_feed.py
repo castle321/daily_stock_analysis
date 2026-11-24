@@ -322,6 +322,7 @@ class RssNewsSearchAdapter:
         self.collector = collector or NewsFeedCollector()
         self.store = store or NewsStore()
         self._rss_results = None
+        self._rss_returned = False
 
     @property
     def is_available(self):
@@ -351,7 +352,10 @@ class RssNewsSearchAdapter:
         max_results: int = 5,
         focus_keywords=None,
     ):
-        rss_results = self._load_rss_results() if stock_code == "market" else []
+        rss_results = []
+        if stock_code == "market" and not self._rss_returned:
+            rss_results = self._load_rss_results()
+            self._rss_returned = True
         fallback_results = []
         fallback_provider = ""
         if self.fallback and self.fallback.is_available:
