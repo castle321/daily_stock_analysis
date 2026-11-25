@@ -47,19 +47,19 @@ DEFAULT_NEWS_FEEDS = (
     NewsFeedSource(
         "sina_finance",
         "新浪财经-财经要闻",
-        "http://rss.sina.com.cn/roll/finance/hot_roll.xml",
+        "https://rss.sina.com.cn/roll/finance/hot_roll.xml",
         "market",
     ),
     NewsFeedSource(
         "sina_stock",
         "新浪财经-股票要闻",
-        "http://rss.sina.com.cn/roll/stock/hot_roll.xml",
+        "https://rss.sina.com.cn/roll/stock/hot_roll.xml",
         "stock",
     ),
     NewsFeedSource(
         "sina_jsy",
         "新浪财经-股市及时雨",
-        "http://rss.sina.com.cn/finance/jsy.xml",
+        "https://rss.sina.com.cn/finance/jsy.xml",
         "market",
     ),
     NewsFeedSource(
@@ -330,9 +330,18 @@ class NewsFeedCollector:
             )
             response.raise_for_status()
             articles = parse_rss(response.content, source)
-            logger.info(
-                "[新闻采集] %s 获取 %d 条", source.name, len(articles)
-            )
+            if not articles:
+                logger.warning(
+                    "[新闻采集] %s 返回 0 条：status=%s content_type=%s bytes=%d",
+                    source.name,
+                    getattr(response, "status_code", "unknown"),
+                    response.headers.get("Content-Type", "unknown"),
+                    len(response.content or b""),
+                )
+            else:
+                logger.info(
+                    "[新闻采集] %s 获取 %d 条", source.name, len(articles)
+                )
             return articles
         except Exception as exc:
             logger.warning("[新闻采集] %s 失败: %s", source.name, exc)
