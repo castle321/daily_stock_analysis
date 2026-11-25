@@ -2,6 +2,7 @@
 """Tests for the RSS adapter used by market review."""
 
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 from src.news_feed import (
