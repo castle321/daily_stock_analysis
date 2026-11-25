@@ -442,6 +442,8 @@ class RssNewsSearchAdapter:
         # keeps the live copy when the same article exists in both sources.
         try:
             stored = self.store.recent(limit=300) or []
+            if not isinstance(stored, (list, tuple)):
+                stored = []
         except Exception:
             logger.exception("[RSS] 读取本地新闻缓存失败")
             stored = []
