@@ -496,7 +496,7 @@ class RssNewsSearchAdapter:
             # reduce accidental matches in generic article summaries.
             code_match = bool(
                 code_key
-                and re.search(rf"(?<!\\d){re.escape(code_key)}(?!\\d)", f"{title} {snippet}")
+                and re.search(rf"(?<!\d){re.escape(code_key)}(?!\d)", f"{title} {snippet}")
             )
             name_match = bool(
                 name_key
