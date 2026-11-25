@@ -151,7 +151,7 @@ class RssNewsSearchAdapterTests(unittest.TestCase):
     def test_stock_code_match_requires_numeric_token_boundary(self):
         article = NewsArticle(
             title="其他代码16005190相关市场消息",
-            summary="不包含完整的600519代码",
+            summary="不包含目标股票代码，仅出现其他数字",
             url="https://example.com/wrong-code",
             source="测试 RSS",
             category="stock",
