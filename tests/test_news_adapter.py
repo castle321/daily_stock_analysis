@@ -2,6 +2,7 @@
 """Tests for the RSS adapter used by market review."""
 
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 from src.news_feed import (
@@ -92,6 +93,79 @@ class RssNewsSearchAdapterTests(unittest.TestCase):
         self.assertEqual(result["latest_news"].results[0].title, article.title)
         self.assertIn("英维克液冷产品订单进展", report)
         self.assertIn("测试 RSS", report)
+
+    def test_stale_rss_items_are_excluded_and_recent_sqlite_items_are_reused(self):
+        stale_time = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        fresh_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        stale_article = NewsArticle(
+            title="五天前的旧新闻",
+            summary="旧摘要",
+            url="https://example.com/old",
+            source="测试 RSS",
+            category="market",
+            published_at=stale_time,
+        )
+        collector = Mock()
+        collector.collect_once.return_value = [stale_article]
+        store = Mock()
+        store.recent.return_value = [
+            {
+                "title": "数据库中的新新闻",
+                "summary": "缓存摘要",
+                "url": "https://example.com/cached",
+                "source": "缓存来源",
+                "published_at": fresh_time,
+                "collected_at": fresh_time,
+            }
+        ]
+        adapter = RssNewsSearchAdapter(collector=collector, store=store)
+
+        response = adapter.search_stock_news("market", "大盘", max_results=5)
+
+        self.assertEqual(
+            [item.title for item in response.results],
+            ["数据库中的新新闻"],
+        )
+        self.assertNotIn("五天前的旧新闻", [item.title for item in response.results])
+        store.recent.assert_called_once_with(limit=300)
+
+    def test_short_stock_name_in_summary_alone_does_not_match(self):
+        article = NewsArticle(
+            title="市场观察：行业走势分析",
+            summary="文章提到平安，但并非相关公司新闻",
+            url="https://example.com/unrelated",
+            source="测试 RSS",
+            category="stock",
+        )
+        collector = Mock()
+        collector.collect_once.return_value = [article]
+        adapter = RssNewsSearchAdapter(collector=collector, store=Mock())
+
+        result = adapter.search_comprehensive_intel(
+            stock_code="000001",
+            stock_name="平安",
+        )
+
+        self.assertEqual(result["latest_news"].results, [])
+
+    def test_stock_code_match_requires_numeric_token_boundary(self):
+        article = NewsArticle(
+            title="其他代码16005190相关市场消息",
+            summary="不包含目标股票代码，仅出现其他数字",
+            url="https://example.com/wrong-code",
+            source="测试 RSS",
+            category="stock",
+        )
+        collector = Mock()
+        collector.collect_once.return_value = [article]
+        adapter = RssNewsSearchAdapter(collector=collector, store=Mock())
+
+        result = adapter.search_comprehensive_intel(
+            stock_code="600519",
+            stock_name="贵州茅台",
+        )
+
+        self.assertEqual(result["latest_news"].results, [])
 
     def test_rss_works_without_paid_or_keyed_search_provider(self):
         article = NewsArticle(

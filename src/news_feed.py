@@ -9,7 +9,7 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -47,19 +47,19 @@ DEFAULT_NEWS_FEEDS = (
     NewsFeedSource(
         "sina_finance",
         "新浪财经-财经要闻",
-        "http://rss.sina.com.cn/roll/finance/hot_roll.xml",
+        "https://rss.sina.com.cn/roll/finance/hot_roll.xml",
         "market",
     ),
     NewsFeedSource(
         "sina_stock",
         "新浪财经-股票要闻",
-        "http://rss.sina.com.cn/roll/stock/hot_roll.xml",
+        "https://rss.sina.com.cn/roll/stock/hot_roll.xml",
         "stock",
     ),
     NewsFeedSource(
         "sina_jsy",
         "新浪财经-股市及时雨",
-        "http://rss.sina.com.cn/finance/jsy.xml",
+        "https://rss.sina.com.cn/finance/jsy.xml",
         "market",
     ),
     NewsFeedSource(
@@ -330,9 +330,18 @@ class NewsFeedCollector:
             )
             response.raise_for_status()
             articles = parse_rss(response.content, source)
-            logger.info(
-                "[新闻采集] %s 获取 %d 条", source.name, len(articles)
-            )
+            if not articles:
+                logger.warning(
+                    "[新闻采集] %s 返回 0 条：status=%s content_type=%s bytes=%d",
+                    source.name,
+                    getattr(response, "status_code", "unknown"),
+                    response.headers.get("Content-Type", "unknown"),
+                    len(response.content or b""),
+                )
+            else:
+                logger.info(
+                    "[新闻采集] %s 获取 %d 条", source.name, len(articles)
+                )
             return articles
         except Exception as exc:
             logger.warning("[新闻采集] %s 失败: %s", source.name, exc)
@@ -370,20 +379,104 @@ class RssNewsSearchAdapter:
         return True
 
     def _load_rss_results(self):
+        """Load fresh RSS items, falling back to recently persisted articles.
+
+        The default freshness window is 72 hours and can be overridden with
+        NEWS_MAX_AGE_HOURS. Items without a publication timestamp use their
+        collection timestamp when read back from SQLite.
+        """
         if self._rss_results is not None:
             return self._rss_results
-        articles = self.collector.collect_once()
-        self.store.save_many(articles)
-        self._rss_results = [
-            SearchResult(
-                title=item.title,
-                snippet=item.summary,
-                url=item.url,
-                source=item.source,
-                published_date=_format_china_published_at(item.published_at),
+
+        try:
+            articles = self.collector.collect_once() or []
+        except Exception:
+            logger.exception("[RSS] 采集异常，尝试使用本地新闻缓存")
+            articles = []
+
+        try:
+            if articles:
+                self.store.save_many(articles)
+        except Exception:
+            logger.exception("[RSS] 新闻写入数据库失败，不影响本轮分析")
+
+        candidates = []
+        now = datetime.now(timezone.utc)
+        try:
+            max_age_hours = max(
+                1, min(int(os.getenv("NEWS_MAX_AGE_HOURS", "72")), 24 * 30)
             )
-            for item in articles
-        ]
+        except (TypeError, ValueError):
+            max_age_hours = 72
+        cutoff = now - timedelta(hours=max_age_hours)
+
+        def add_candidate(title, summary, url, source, published_at, collected_at=None):
+            timestamp_value = published_at or collected_at
+            timestamp = None
+            if timestamp_value:
+                try:
+                    timestamp = datetime.fromisoformat(
+                        str(timestamp_value).replace("Z", "+00:00")
+                    )
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=timezone.utc)
+                    timestamp = timestamp.astimezone(timezone.utc)
+                except (TypeError, ValueError):
+                    return
+            elif collected_at is None:
+                # A just-fetched feed item without a publication date is
+                # treated as newly observed, but persisted unknown-date rows
+                # are judged by collected_at on subsequent runs.
+                timestamp = now
+            if timestamp and (timestamp < cutoff or timestamp > now + timedelta(minutes=10)):
+                return
+            candidates.append((
+                timestamp or datetime.min.replace(tzinfo=timezone.utc),
+                SearchResult(
+                    title=title or "",
+                    snippet=summary or "",
+                    url=url or "",
+                    source=source or "未知来源",
+                    published_date=_format_china_published_at(published_at),
+                ),
+            ))
+
+        for item in articles:
+            add_candidate(
+                item.title, item.summary, item.url, item.source,
+                item.published_at,
+            )
+
+        # Merge recent persisted items as a resilience path. URL deduplication
+        # keeps the live copy when the same article exists in both sources.
+        try:
+            stored = self.store.recent(limit=300) or []
+            if not isinstance(stored, (list, tuple)):
+                stored = []
+        except Exception:
+            logger.exception("[RSS] 读取本地新闻缓存失败")
+            stored = []
+        for item in stored:
+            add_candidate(
+                item.get("title"), item.get("summary"), item.get("url"),
+                item.get("source"), item.get("published_at"),
+                item.get("collected_at"),
+            )
+
+        candidates.sort(key=lambda pair: pair[0], reverse=True)
+        results = []
+        seen = set()
+        for _, result in candidates:
+            key = (result.url or "").strip() or result.title.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            results.append(result)
+        self._rss_results = results
+        logger.info(
+            "[RSS] 可用于分析的新闻 %d 条（时效窗口 %d 小时）",
+            len(results), max_age_hours,
+        )
         return self._rss_results
 
     def search_comprehensive_intel(
@@ -405,8 +498,23 @@ class RssNewsSearchAdapter:
         name_key = (stock_name or "").strip().lower()
         code_key = (stock_code or "").strip().lower()
         for item in self._load_rss_results():
-            haystack = f"{item.title} {item.snippet}".lower()
-            if (name_key and name_key in haystack) or (code_key and code_key in haystack):
+            title = (item.title or "").lower()
+            snippet = (item.snippet or "").lower()
+            # Stock codes must be a complete numeric token. Short Chinese
+            # names (one or two characters) are accepted in titles only to
+            # reduce accidental matches in generic article summaries.
+            code_match = bool(
+                code_key
+                and re.search(rf"(?<!\d){re.escape(code_key)}(?!\d)", f"{title} {snippet}")
+            )
+            name_match = bool(
+                name_key
+                and (
+                    name_key in title
+                    or (len(name_key) >= 3 and name_key in snippet)
+                )
+            )
+            if name_match or code_match:
                 matched.append(item)
 
         if matched:

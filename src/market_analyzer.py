@@ -309,6 +309,7 @@ class MarketAnalyzer:
             return []
         
         all_news = []
+        seen_news = set()
         today = now_china()
         date_str = today.strftime('%Y年%m月%d日')
 
@@ -331,8 +332,23 @@ class MarketAnalyzer:
                     focus_keywords=query.split()
                 )
                 if response and response.results:
-                    all_news.extend(response.results)
-                    logger.info(f"[大盘] 搜索 '{query}' 获取 {len(response.results)} 条结果")
+                    added_count = 0
+                    for item in response.results:
+                        # 三组搜索可能返回同一篇新闻；跨查询统一去重，避免重复占用报告篇幅。
+                        url = (getattr(item, "url", "") or "").strip()
+                        title = (getattr(item, "title", "") or "").strip().lower()
+                        identity = url or title
+                        if not identity or identity in seen_news:
+                            continue
+                        seen_news.add(identity)
+                        all_news.append(item)
+                        added_count += 1
+                        if len(all_news) >= 9:
+                            break
+                    logger.info(
+                        f"[大盘] 搜索 '{query}' 获取 {len(response.results)} 条结果，"
+                        f"新增 {added_count} 条（累计去重后 {len(all_news)} 条）"
+                    )
             
             logger.info(f"[大盘] 共获取 {len(all_news)} 条市场新闻")
             
